@@ -71,6 +71,84 @@ val openAIConfig = OpenAIConfig(
 )
 ```
 
+## Quick Start Guide
+
+This guide will help you quickly build and run the example applications in this project.
+
+### Building the Project
+
+To build the entire project, run:
+
+```bash
+sbt compile
+```
+
+This will compile all modules and prepare them for execution.
+
+### Running the Examples
+
+We provide a convenient script to run the example applications. First, make the script executable:
+
+```bash
+chmod +x run-examples.sh
+```
+
+Then you can run any of the examples with:
+
+```bash
+./run-examples.sh <example-name>
+```
+
+Available examples:
+- `simplechat` - Basic chat application using ZIO LangChain
+- `advancedchat` - Chat with streaming responses and memory capabilities
+- `simplerag` - Retrieval-Augmented Generation with document retrieval
+- `simpleagent` - Agent that can use tools to complete tasks
+- `enhancedrag` - Enhanced RAG with improved retrieval techniques
+
+Example usage:
+```bash
+./run-examples.sh simplechat
+```
+
+To see all available examples, run the script without arguments:
+```bash
+./run-examples.sh
+```
+
+### Required Environment Variables
+
+The examples require an OpenAI API key, which should be set as an environment variable:
+
+```bash
+export OPENAI_API_KEY=your-openai-api-key
+```
+
+If the API key is not set, the run script will display a warning and prompt you to continue or exit.
+
+### Example Applications
+
+1. **SimpleChat**: A basic chat application with an LLM.
+   - Demonstrates basic LLM interaction
+   - Uses a simple in-memory conversation history
+
+2. **AdvancedChat**: An enhanced chat application with additional features.
+   - Supports streaming responses (tokens appear one by one)
+   - Includes function/tool calling capabilities
+   - Uses BufferMemory for conversation history
+
+3. **SimpleRAG**: A Retrieval-Augmented Generation example.
+   - Loads and processes documents
+   - Creates embeddings for document chunks
+   - Retrieves relevant documents for queries
+   - Generates responses based on retrieved context
+
+4. **SimpleAgent**: An agent that can use tools to solve tasks.
+   - Implements ReAct (Reasoning, Acting, Observing) pattern
+   - Includes a calculator tool and a mock search tool
+   - Makes decisions about which tools to use
+   - Handles multi-step reasoning
+
 ## Examples
 
 ### Simple Chat

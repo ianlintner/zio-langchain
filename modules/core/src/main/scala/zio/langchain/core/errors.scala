@@ -1,14 +1,13 @@
 package zio.langchain.core
 
 /**
- * Base trait for all errors in ZIO LangChain.
- */
-sealed trait LangChainError extends Throwable
-
-/**
  * Error types for ZIO LangChain.
  */
 object errors:
+  /**
+   * Base trait for all errors in ZIO LangChain.
+   */
+  trait LangChainError extends Throwable
   /**
    * Error that occurs during LLM operations.
    *

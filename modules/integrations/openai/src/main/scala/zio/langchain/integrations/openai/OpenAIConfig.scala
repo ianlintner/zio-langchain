@@ -17,6 +17,9 @@ import zio.langchain.core.config.ModelConfig
  * @param maxTokens The maximum number of tokens to generate (optional)
  * @param organizationId The OpenAI organization ID (optional)
  * @param timeout The timeout for API requests
+ * @param enableStreaming Whether to enable streaming responses (if supported by the model)
+ * @param logRequests Whether to log API requests
+ * @param logResponses Whether to log API responses
  */
 case class OpenAIConfig(
   apiKey: String,
@@ -24,7 +27,10 @@ case class OpenAIConfig(
   temperature: Double = 0.7,
   maxTokens: Option[Int] = None,
   organizationId: Option[String] = None,
-  timeout: Duration = Duration.ofSeconds(60)
+  timeout: Duration = Duration.ofSeconds(60),
+  enableStreaming: Boolean = true,
+  logRequests: Boolean = false,
+  logResponses: Boolean = false
 ) extends ModelConfig
 
 /**
