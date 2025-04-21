@@ -45,7 +45,13 @@ class JsonSchemaOutputParser[T: JsonDecoder: JsonEncoder] private (
         case s => s
 
       json
-    }.flatMap { cleanedJson =>
+    }.mapError(e =>
+      OutputParsingError(
+        e,
+        "Failed to extract JSON content",
+        Some(text)
+      )
+    ).flatMap { cleanedJson =>
       // Parse the JSON and validate against the schema
       ZIO.fromEither(
         options match
