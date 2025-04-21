@@ -106,7 +106,7 @@ object LLMChain:
     ZLayer {
       for
         llm <- ZIO.service[LLM]
-        memoryOpt <- ZIO.serviceOption[Memory]
+        memoryOpt = None
       yield string(promptTemplate, llm, memoryOpt)
     }
   
@@ -124,6 +124,6 @@ object LLMChain:
     ZLayer {
       for
         llm <- ZIO.service[LLM]
-        memoryOpt <- ZIO.serviceOption[Memory]
+        memoryOpt = None
       yield typed[I, O](promptTemplate, llm, parser, memoryOpt)
     }

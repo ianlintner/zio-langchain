@@ -1,5 +1,4 @@
 val zioVersion = "2.0.19"
-val langchain4jVersion = "0.23.0" // Using a version that is available in Maven Central
 
 ThisBuild / organization := "dev.zio"
 ThisBuild / version := "0.1.0-SNAPSHOT"
@@ -31,32 +30,6 @@ lazy val commonDependencies = Seq(
   "dev.zio" %% "zio-test" % zioVersion % Test,
   "dev.zio" %% "zio-test-sbt" % zioVersion % Test,
   "dev.zio" %% "zio-test-magnolia" % zioVersion % Test
-)
-
-// langchain4j core dependencies
-lazy val langchain4jDependencies = Seq(
-  "dev.langchain4j" % "langchain4j" % langchain4jVersion,
-  "dev.langchain4j" % "langchain4j-core" % langchain4jVersion
-)
-
-// langchain4j model dependencies
-lazy val langchain4jModelDependencies = Seq(
-  "dev.langchain4j" % "langchain4j-open-ai" % langchain4jVersion
-  // Note: Other model providers can be added as needed and when available
-)
-
-// langchain4j embedding dependencies
-lazy val langchain4jEmbeddingDependencies = Seq(
-  "dev.langchain4j" % "langchain4j-embeddings" % langchain4jVersion,
-  "dev.langchain4j" % "langchain4j-open-ai" % langchain4jVersion,
-  "dev.langchain4j" % "langchain4j-hugging-face" % langchain4jVersion
-)
-
-// langchain4j document dependencies
-lazy val langchain4jDocumentDependencies = Seq(
-  // Core langchain4j dependencies only
-  "dev.langchain4j" % "langchain4j" % langchain4jVersion,
-  "dev.langchain4j" % "langchain4j-core" % langchain4jVersion
 )
 
 // Common settings for all projects
@@ -102,7 +75,7 @@ lazy val core = project
   .in(file("modules/core"))
   .settings(
     name := "zio-langchain-core",
-    libraryDependencies ++= commonDependencies ++ langchain4jDependencies
+    libraryDependencies ++= commonDependencies
   )
 
 lazy val models = project
@@ -110,7 +83,7 @@ lazy val models = project
   .dependsOn(core)
   .settings(
     name := "zio-langchain-models",
-    libraryDependencies ++= commonDependencies ++ langchain4jDependencies ++ langchain4jModelDependencies
+    libraryDependencies ++= commonDependencies
   )
 
 lazy val embeddings = project
@@ -118,7 +91,7 @@ lazy val embeddings = project
   .dependsOn(core)
   .settings(
     name := "zio-langchain-embeddings",
-    libraryDependencies ++= commonDependencies ++ langchain4jDependencies ++ langchain4jEmbeddingDependencies
+    libraryDependencies ++= commonDependencies
   )
 
 lazy val memory = project
@@ -126,7 +99,7 @@ lazy val memory = project
   .dependsOn(core)
   .settings(
     name := "zio-langchain-memory",
-    libraryDependencies ++= commonDependencies ++ langchain4jDependencies ++ Seq(
+    libraryDependencies ++= commonDependencies ++ Seq(
       // Using core langchain4j - memory implementation is custom
       "dev.zio" %% "zio-cache" % "0.2.3"
     )
@@ -137,7 +110,7 @@ lazy val documentLoaders = project
   .dependsOn(core)
   .settings(
     name := "zio-langchain-document-loaders",
-    libraryDependencies ++= commonDependencies ++ langchain4jDocumentDependencies
+    libraryDependencies ++= commonDependencies
   )
 
 lazy val documentParsers = project
@@ -145,7 +118,7 @@ lazy val documentParsers = project
   .dependsOn(core)
   .settings(
     name := "zio-langchain-document-parsers",
-    libraryDependencies ++= commonDependencies ++ langchain4jDocumentDependencies
+    libraryDependencies ++= commonDependencies
   )
 
 lazy val retrievers = project
@@ -153,11 +126,7 @@ lazy val retrievers = project
   .dependsOn(core, embeddings)
   .settings(
     name := "zio-langchain-retrievers",
-    libraryDependencies ++= commonDependencies ++ langchain4jDependencies ++ Seq(
-      "dev.langchain4j" % "langchain4j-embeddings" % langchain4jVersion,
-      "dev.langchain4j" % "langchain4j-chroma" % langchain4jVersion,
-      "dev.langchain4j" % "langchain4j-pinecone" % langchain4jVersion
-    )
+    libraryDependencies ++= commonDependencies
   )
 
 lazy val chains = project
@@ -165,8 +134,7 @@ lazy val chains = project
   .dependsOn(core, models, retrievers)
   .settings(
     name := "zio-langchain-chains",
-    libraryDependencies ++= commonDependencies ++ langchain4jDependencies
-    // Removed reference to langchain4j-rag which is not available in version 0.23.0
+    libraryDependencies ++= commonDependencies
   )
 
 lazy val agents = project
@@ -174,8 +142,7 @@ lazy val agents = project
   .dependsOn(core, models, tools, chains)
   .settings(
     name := "zio-langchain-agents",
-    libraryDependencies ++= commonDependencies ++ langchain4jDependencies
-    // Removed dependency on langchain4j-agents which is not available in version 0.23.0
+    libraryDependencies ++= commonDependencies
   )
 
 lazy val tools = project
@@ -183,7 +150,7 @@ lazy val tools = project
   .dependsOn(core)
   .settings(
     name := "zio-langchain-tools",
-    libraryDependencies ++= commonDependencies ++ langchain4jDependencies
+    libraryDependencies ++= commonDependencies
   )
 
 lazy val integrationOpenAI = project
@@ -191,9 +158,7 @@ lazy val integrationOpenAI = project
   .dependsOn(core, models, embeddings)
   .settings(
     name := "zio-langchain-openai",
-    libraryDependencies ++= commonDependencies ++ Seq(
-      "dev.langchain4j" % "langchain4j-open-ai" % langchain4jVersion
-    )
+    libraryDependencies ++= commonDependencies
   )
 
 // Commented out as langchain4j-anthropic dependency is not available
@@ -202,7 +167,7 @@ lazy val integrationOpenAI = project
 //   .dependsOn(core, models)
 //   .settings(
 //     name := "zio-langchain-anthropic",
-//     libraryDependencies ++= commonDependencies ++ langchain4jDependencies
+//     libraryDependencies ++= commonDependencies
 //   )
 
 // Commented out as langchain4j-huggingface dependency may not be compatible with chosen version
@@ -211,7 +176,7 @@ lazy val integrationOpenAI = project
 //   .dependsOn(core, models, embeddings)
 //   .settings(
 //     name := "zio-langchain-huggingface",
-//     libraryDependencies ++= commonDependencies ++ langchain4jDependencies
+//     libraryDependencies ++= commonDependencies
 //   )
 
 lazy val examples = project

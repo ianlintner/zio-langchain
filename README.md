@@ -47,18 +47,12 @@ libraryDependencies ++= Seq(
 
 ### Configuration
 
-Create an `application.conf` file in your resources directory:
+Set the required environment variables:
 
-```hocon
-openai {
-  api-key = ${?OPENAI_API_KEY}
-  model = "gpt-3.5-turbo"
-  temperature = 0.7
-  
-  embedding {
-    model = "text-embedding-ada-002"
-  }
-}
+```bash
+export OPENAI_API_KEY="your-openai-api-key"
+export OPENAI_MODEL="gpt-3.5-turbo"  # Optional, defaults to gpt-3.5-turbo
+export OPENAI_TEMPERATURE="0.7"      # Optional, defaults to 0.7
 ```
 
 Or configure programmatically:
@@ -100,18 +94,18 @@ Then you can run any of the examples with:
 ```
 
 Available examples:
-- `simple-chat` - Basic chat application using ZIO LangChain
-- `advanced-chat` - Chat with streaming responses and memory capabilities
-- `simple-rag` - Retrieval-Augmented Generation with document retrieval
-- `simple-agent` - Agent that can use tools to complete tasks
-- `enhanced-rag` - Enhanced RAG with improved retrieval techniques
+- `SimpleChat` - Basic chat application using ZIO LangChain
+- `SimpleRAG` - Retrieval-Augmented Generation with document retrieval
+- `AdvancedChat` - Chat with streaming responses and memory capabilities
+- `EnhancedRAG` - Enhanced RAG with improved retrieval techniques
+- `SimpleAgent` - Agent that can use tools to complete tasks
 
 Example usage:
 ```bash
-OPENAI_API_KEY=your-api-key ./run-examples.sh simple-chat
+OPENAI_API_KEY=your-api-key ./run-examples.sh SimpleChat
 ```
 
-To see all available examples, run the script without arguments:
+To see all available examples and run them interactively, run the script without arguments:
 ```bash
 ./run-examples.sh
 ```
@@ -124,7 +118,7 @@ The examples require an OpenAI API key, which should be set as an environment va
 export OPENAI_API_KEY=your-openai-api-key
 ```
 
-If the API key is not set, the run script will display a warning and prompt you to continue or exit.
+If the API key is not set, the run script will display a warning and exit.
 
 ### Example Applications
 
@@ -132,18 +126,23 @@ If the API key is not set, the run script will display a warning and prompt you 
    - Demonstrates basic LLM interaction
    - Uses a simple in-memory conversation history
 
-2. **AdvancedChat**: An enhanced chat application with additional features.
-   - Supports streaming responses (tokens appear one by one)
-   - Includes function/tool calling capabilities
-   - Uses BufferMemory for conversation history
-
-3. **SimpleRAG**: A Retrieval-Augmented Generation example.
+2. **SimpleRAG**: A Retrieval-Augmented Generation example.
    - Loads and processes documents
    - Creates embeddings for document chunks
    - Retrieves relevant documents for queries
    - Generates responses based on retrieved context
 
-4. **SimpleAgent**: An agent that can use tools to solve tasks.
+3. **AdvancedChat**: An enhanced chat application with additional features.
+   - Supports streaming responses (tokens appear one by one)
+   - Includes function/tool calling capabilities
+   - Uses BufferMemory for conversation history
+
+4. **EnhancedRAG**: An improved RAG implementation.
+   - Enhanced document processing and chunking
+   - Improved similarity search for better retrieval
+   - More sophisticated prompt engineering
+
+5. **SimpleAgent**: An agent that can use tools to solve tasks.
    - Implements ReAct (Reasoning, Acting, Observing) pattern
    - Includes a calculator tool and a mock search tool
    - Makes decisions about which tools to use
@@ -247,18 +246,16 @@ val templateChain = Chain[Any, Throwable, (String, String), String] {
     ZIO.succeed(template.replace("{{question}}", question))
 }
 
-// Create a chain that calls the LLM
+// Create a chain that generates a response
 val llmChain = Chain[Any, Throwable, String, String] { prompt =>
-  llm.complete(prompt).mapError(e => e.cause)
+  llm.complete(prompt).mapError(e => e)
 }
 
-// Combine the chains
-val ragChain = Chain[Any, Throwable, String, (String, Seq[Document])] { query =>
-  retrievalChain.run(query).map(docs => (query, docs))
-} >>> Chain[Any, Throwable, (String, Seq[Document]), (String, String)] { 
-  case (query, docs) =>
-    promptChain.run(docs).map(template => (template, query))
-} >>> templateChain >>> llmChain
+// Compose the chains
+val answerChain = retrievalChain >>> promptChain >>> templateChain >>> llmChain
+
+// Use the chain
+val result = answerChain.run("What is ZIO?")
 ```
 
 ### Using Agents with Tools
@@ -267,38 +264,30 @@ val ragChain = Chain[Any, Throwable, String, (String, Seq[Document])] { query =>
 import zio.langchain.core.agent.*
 import zio.langchain.core.tool.*
 
-// Define tools
-val calculator = Tool("calculator", "Perform calculations") { input =>
+// Create tools
+val calculatorTool = Tool.make("calculator", "Calculate mathematical expressions") { input =>
+  // Parse and evaluate the mathematical expression
   ZIO.attempt {
-    val expr = input.trim
-    val result = // evaluate expression
+    val expression = input.trim
+    val result = /* calculate result */
     result.toString
-  }.mapError(e => ToolExecutionError(e))
+  }
 }
 
-val search = Tool("search", "Search for information") { query =>
-  // Implement search functionality
-  ZIO.succeed(s"Results for: $query")
+val searchTool = Tool.make("search", "Search for information") { query =>
+  ZIO.succeed(s"Search results for: $query")
 }
 
-// Create agent
-val agent = ReActAgent(
-  llm = llm,
-  tools = Map(
-    "calculator" -> calculator,
-    "search" -> search
-  ),
-  maxIterations = 10
-)
+// Create an agent
+val agent = Agent.builder
+  .tools(calculatorTool, searchTool)
+  .llm(llm)
+  .build
 
-// Run agent
-val result = agent.run("What is the square root of 144 plus 17?")
+// Use the agent
+val result = agent.run("What is 25 * 76 + 14?")
 ```
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-This project is licensed under the Apache License 2.0 - see the LICENSE file for details.
+This project is licensed under the Apache License, Version 2.0 - see the LICENSE file for details.

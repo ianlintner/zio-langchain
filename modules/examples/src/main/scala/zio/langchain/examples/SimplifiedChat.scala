@@ -52,30 +52,24 @@ object SimplifiedChat extends ZIOAppDefault:
    * @param llm The LLM service
    * @return A ZIO effect that completes when the user exits the chat
    */
-  private def chatLoop(llm: LLM): ZIO[Any, Throwable, Unit] =
-    for
+  private def chatLoop(llm: LLM): ZIO[Any, Throwable, Unit] = {
+    for {
       // Prompt the user for input
       _ <- printLine("> ", noNewLine = true)
       input <- readLine
       
       // Check if the user wants to exit
-      _ <- if input.toLowerCase == "exit" then
+      _ <- if (input.toLowerCase == "exit") 
         printLine("Goodbye!")
-      else
-        // Create a user message with the input
-        userMessage = ChatMessage(
-          role = Role.User, 
-          content = Some(input), 
-          metadata = Map.empty
-        )
-        
-        // Send the message to the LLM
-        response <- llm.complete(input)
-        
-        // Display the response
-        _ <- printLine(response)
-        _ <- printLine("")
-        
-        // Continue the chat loop
-        chatLoop(llm)
-    yield ()
+      else 
+        for {
+          // Get response from LLM
+          response <- llm.complete(input)
+          // Display the response
+          _ <- printLine(response)
+          _ <- printLine("")
+          // Continue the chat loop
+          _ <- chatLoop(llm)
+        } yield ()
+    } yield ()
+  }

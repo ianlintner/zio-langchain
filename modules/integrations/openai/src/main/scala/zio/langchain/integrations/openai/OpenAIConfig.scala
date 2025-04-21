@@ -1,12 +1,7 @@
 package zio.langchain.integrations.openai
 
 import zio.*
-import zio.config.*
-import zio.config.magnolia.descriptor
-
 import java.time.Duration
-
-import zio.langchain.core.config.ModelConfig
 
 /**
  * Configuration for OpenAI models.
@@ -31,29 +26,31 @@ case class OpenAIConfig(
   enableStreaming: Boolean = true,
   logRequests: Boolean = false,
   logResponses: Boolean = false
-) extends ModelConfig
+)
 
 /**
  * Companion object for OpenAIConfig.
  */
 object OpenAIConfig:
   /**
-   * Automatically derived ConfigDescriptor for OpenAIConfig.
+   * Creates an OpenAIConfig from environment variables.
    */
-  given ConfigDescriptor[OpenAIConfig] = descriptor[OpenAIConfig]
+  def fromEnv: OpenAIConfig = 
+    OpenAIConfig(
+      apiKey = sys.env.getOrElse("OPENAI_API_KEY", ""),
+      model = sys.env.getOrElse("OPENAI_MODEL", "gpt-3.5-turbo"),
+      temperature = sys.env.getOrElse("OPENAI_TEMPERATURE", "0.7").toDouble,
+      maxTokens = sys.env.get("OPENAI_MAX_TOKENS").map(_.toInt),
+      organizationId = sys.env.get("OPENAI_ORG_ID"),
+      timeout = Duration.ofMillis(
+        sys.env.getOrElse("OPENAI_TIMEOUT_MS", "60000").toLong
+      ),
+      enableStreaming = sys.env.getOrElse("OPENAI_ENABLE_STREAMING", "true").toBoolean,
+      logRequests = sys.env.getOrElse("OPENAI_LOG_REQUESTS", "false").toBoolean,
+      logResponses = sys.env.getOrElse("OPENAI_LOG_RESPONSES", "false").toBoolean
+    )
   
   /**
-   * Loads OpenAIConfig from the "openai" section of the configuration.
-   *
-   * @return A ZIO effect that produces an OpenAIConfig or fails with a ConfigError
+   * Creates a ZLayer that provides an OpenAIConfig from environment variables.
    */
-  val load: ZIO[Any, ConfigError, OpenAIConfig] =
-    zio.langchain.core.config.config.loadAt[OpenAIConfig]("openai")
-  
-  /**
-   * Creates a ZLayer from the "openai" section of the configuration.
-   *
-   * @return A ZLayer that provides an OpenAIConfig
-   */
-  val layer: ZLayer[Any, ConfigError, OpenAIConfig] =
-    ZLayer.fromZIO(load)
+  val layer: ULayer[OpenAIConfig] = ZLayer.succeed(fromEnv)

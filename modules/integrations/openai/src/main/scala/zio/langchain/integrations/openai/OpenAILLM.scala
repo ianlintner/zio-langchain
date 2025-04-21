@@ -1,40 +1,73 @@
 package zio.langchain.integrations.openai
 
 import zio.*
+import zio.json.*
 import zio.stream.ZStream
-
-import dev.langchain4j.model.openai.{OpenAiChatModel, OpenAiStreamingChatModel}
-import dev.langchain4j.model.chat.{ChatLanguageModel, StreamingChatLanguageModel}
-import dev.langchain4j.model.output.Response
-import dev.langchain4j.data.message.{AiMessage, ChatMessage => LC4JChatMessage, UserMessage, SystemMessage}
-import zio.langchain.core.domain
-import dev.langchain4j.model.openai.{OpenAiModelName, OpenAiFunctionCallMode}
-import dev.langchain4j.agent.tool.{ToolSpecification, ToolExecutionRequest}
 
 import zio.langchain.core.model.LLM
 import zio.langchain.core.domain.*
 import zio.langchain.core.errors.*
+import zio.langchain.core.tool.Tool
 
-import scala.jdk.CollectionConverters.*
-import scala.jdk.OptionConverters.*
-import java.util.concurrent.TimeUnit
-import java.util.{List => JList, Map => JMap}
-import scala.collection.mutable.ArrayBuffer
-import java.time.Duration
-import scala.compiletime.asMatchable
+import java.net.URI
+import java.net.http.{HttpClient, HttpRequest, HttpResponse}
+import java.time.{Duration => JDuration}
+import java.nio.charset.StandardCharsets
 
 /**
  * Implementation of the LLM interface for OpenAI models.
+ * This version uses Java's HttpClient to connect to OpenAI API.
  *
- * @param chatClient The langchain4j OpenAI chat client
- * @param streamingChatClient The langchain4j OpenAI streaming chat client
  * @param config The OpenAI configuration
  */
-class OpenAILLM(
-  chatClient: ChatLanguageModel,
-  streamingChatClient: Option[StreamingChatLanguageModel],
-  config: OpenAIConfig
-) extends LLM:
+class OpenAILLM(config: OpenAIConfig) extends LLM:
+  import OpenAILLM.*
+  
+  private val apiUrl = "https://api.openai.com/v1/chat/completions"
+  
+  // Create a Java HTTP client for direct API calls
+  private val httpClient = HttpClient.newBuilder()
+    .version(HttpClient.Version.HTTP_2)
+    .connectTimeout(JDuration.ofMillis(config.timeout.toMillis))
+    .build()
+  
+  /**
+   * Makes an HTTP request to the OpenAI API
+   */
+  private def makeRequest(jsonBody: String): ZIO[Any, Throwable, String] = ZIO.attemptBlocking {
+    // Create request builder
+    val requestBuilder = HttpRequest.newBuilder()
+      .uri(URI.create(apiUrl))
+      .timeout(JDuration.ofMillis(config.timeout.toMillis))
+      .header("Content-Type", "application/json")
+      .header("Authorization", s"Bearer ${config.apiKey}")
+      .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+    
+    // Add organization ID if provided
+    val finalRequest = config.organizationId match
+      case Some(orgId) => requestBuilder.header("OpenAI-Organization", orgId).build()
+      case None => requestBuilder.build()
+    
+    // Log request if enabled
+    if (config.logRequests) {
+      println(s"OpenAI API Request: $jsonBody")
+    }
+    
+    // Execute the request
+    val response = httpClient.send(finalRequest, HttpResponse.BodyHandlers.ofString())
+    
+    // Log response if enabled
+    if (config.logResponses) {
+      println(s"OpenAI API Response: ${response.body()}")
+    }
+    
+    // Check for errors
+    if (response.statusCode() >= 400) {
+      throw new RuntimeException(s"OpenAI API error: ${response.statusCode()}, body: ${response.body()}")
+    }
+    
+    response.body()
+  }
   
   /**
    * Completes a text prompt.
@@ -47,10 +80,9 @@ class OpenAILLM(
     prompt: String,
     parameters: Option[ModelParameters] = None
   ): ZIO[Any, LLMError, String] =
-    ZIO.attemptBlockingIO {
-      chatClient.generate(prompt)
-    }.retry(retrySchedule)
-     .mapError(e => LLMError(e))
+    // Convert to chat completion with a single user message
+    completeChat(Seq(ChatMessage.user(prompt)), parameters)
+      .map(_.message.contentAsString)
   
   /**
    * Completes a chat conversation.
@@ -63,27 +95,70 @@ class OpenAILLM(
     messages: Seq[ChatMessage],
     parameters: Option[ModelParameters] = None
   ): ZIO[Any, LLMError, ChatResponse] =
-    ZIO.attemptBlockingIO {
-      val javaMessages = messages.map(convertToJavaMessage).asJava
-      val response = parameters match
-        case Some(params) =>
-          val modelOptions = createModelOptions(params)
-          chatClient.generate(javaMessages, modelOptions)
-        case None =>
-          chatClient.generate(javaMessages)
-          
-      convertFromJavaResponse(response)
-    }.retry(retrySchedule)
-     .mapError(e => LLMError(e))
+    // Create request
+    val apiMessages = messages.map { message =>
+      message.role match
+        case Role.User => ApiMessage("user", message.contentAsString)
+        case Role.Assistant => ApiMessage("assistant", message.contentAsString)
+        case Role.System => ApiMessage("system", message.contentAsString)
+        case _ => ApiMessage("user", message.contentAsString) // Default to user for unsupported roles
+    }
+    
+    val temperature = parameters
+      .flatMap(_.asInstanceOf[DefaultModelParameters].temperature)
+      .getOrElse(config.temperature)
+    
+    val maxTokens = parameters
+      .flatMap(_.asInstanceOf[DefaultModelParameters].maxTokens)
+      .orElse(config.maxTokens)
+    
+    val request = ChatCompletionRequest(
+      model = config.model,
+      messages = apiMessages,
+      temperature = temperature,
+      max_tokens = maxTokens
+    )
+    
+    val jsonBody = request.toJson
+    
+    // Make request and parse response
+    val result = for
+      respBody <- makeRequest(jsonBody)
+      respObj <- ZIO.fromEither(respBody.fromJson[ChatCompletionResponse])
+        .mapError(err => new RuntimeException(s"Failed to parse response: $err"))
+      response = createChatResponse(respObj)
+    yield response
+    
+    // Handle errors
+    result.mapError(err => LLMError(err))
+  
+  /**
+   * Creates a ChatResponse from the API response.
+   */
+  private def createChatResponse(response: ChatCompletionResponse): ChatResponse =
+    val choice = response.choices.head
+    val content = choice.message.content
+    
+    val message = ChatMessage(
+      role = Role.Assistant,
+      content = Some(content)
+    )
+    
+    val usage = TokenUsage(
+      promptTokens = response.usage.prompt_tokens,
+      completionTokens = response.usage.completion_tokens,
+      totalTokens = response.usage.total_tokens
+    )
+    
+    ChatResponse(
+      message = message,
+      usage = usage,
+      finishReason = Some(choice.finish_reason)
+    )
   
   /**
    * Completes a chat conversation with function calling capabilities.
-   *
-   * @param messages The sequence of chat messages representing the conversation history
-   * @param functions The functions that can be called by the model
-   * @param forceFunctionCall If provided, force the model to call the specified function
-   * @param parameters Optional model parameters to control the generation
-   * @return A ZIO effect that produces a ChatResponse or fails with an LLMError
+   * This is a simplified implementation that doesn't actually use functions.
    */
   override def completeChatWithFunctions(
     messages: Seq[ChatMessage],
@@ -91,33 +166,12 @@ class OpenAILLM(
     forceFunctionCall: Option[String] = None,
     parameters: Option[ModelParameters] = None
   ): ZIO[Any, LLMError, ChatResponse] =
-    ZIO.attemptBlockingIO {
-      val javaMessages = messages.map(convertToJavaMessage).asJava
-      val javaFunctions = functions.map(convertToJavaToolSpecification).asJava
-      
-      val functionCallMode = forceFunctionCall match
-        case Some(functionName) => OpenAiFunctionCallMode.FORCING.withFunctionName(functionName)
-        case None => OpenAiFunctionCallMode.AUTO
-      
-      val response = parameters match
-        case Some(params) =>
-          val modelOptions = createModelOptions(params)
-          chatClient.generate(javaMessages, javaFunctions, functionCallMode, modelOptions)
-        case None =>
-          chatClient.generate(javaMessages, javaFunctions, functionCallMode)
-          
-      convertFromJavaResponse(response)
-    }.retry(retrySchedule)
-     .mapError(e => LLMError(e))
+    // For now, just use regular chat completion
+    completeChat(messages, parameters)
   
   /**
    * Completes a chat conversation with tool usage capabilities.
-   *
-   * @param messages The sequence of chat messages representing the conversation history
-   * @param tools The tools that can be used by the model
-   * @param forceToolUse If true, force the model to use a tool
-   * @param parameters Optional model parameters to control the generation
-   * @return A ZIO effect that produces a ChatResponse or fails with an LLMError
+   * This is a simplified implementation that doesn't actually use tools.
    */
   override def completeChatWithTools(
     messages: Seq[ChatMessage],
@@ -125,119 +179,32 @@ class OpenAILLM(
     forceToolUse: Boolean = false,
     parameters: Option[ModelParameters] = None
   ): ZIO[Any, LLMError, ChatResponse] =
-    completeChatWithFunctions(
-      messages,
-      tools.map(tool => tool.function),
-      if (forceToolUse && tools.nonEmpty) Some(tools.head.function.name) else None,
-      parameters
-    )
+    // For now, just use regular chat completion
+    completeChat(messages, parameters)
   
   /**
    * Streams a text completion token by token.
-   *
-   * @param prompt The text prompt to complete
-   * @param parameters Optional model parameters to control the generation
-   * @return A ZStream that produces string tokens or fails with an LLMError
+   * This is a simplified implementation that doesn't actually stream.
    */
   override def streamComplete(
     prompt: String,
     parameters: Option[ModelParameters] = None
   ): ZStream[Any, LLMError, String] =
-    streamingChatClient match
-      case Some(client) =>
-        ZStream.async[Any, LLMError, String] { emit =>
-          ZIO.attemptBlockingIO {
-            val handler = new dev.langchain4j.model.output.TokenStreamHandler {
-              override def onNext(token: String): Unit =
-                emit(ZIO.succeed(Chunk.single(token)))
-              
-              override def onComplete(): Unit =
-                emit(ZIO.succeed(Chunk.empty))
-              
-              override def onError(error: Throwable): Unit =
-                emit(ZIO.fail(LLMError(error)))
-            }
-            
-            parameters match
-              case Some(params) =>
-                val modelOptions = createModelOptions(params)
-                client.generate(prompt, handler, modelOptions)
-              case None =>
-                client.generate(prompt, handler)
-          }.catchAll { error =>
-            ZIO.succeed(emit(ZIO.fail(LLMError(error))))
-          }
-        }.retry(retrySchedule)
-      
-      case None =>
-        // Fall back to non-streaming if streaming client is not available
-        ZStream.fromZIO(complete(prompt, parameters))
+    ZStream.fromZIO(complete(prompt, parameters))
   
   /**
    * Streams a chat completion token by token.
-   *
-   * @param messages The sequence of chat messages representing the conversation history
-   * @param parameters Optional model parameters to control the generation
-   * @return A ZStream that produces ChatResponse chunks or fails with an LLMError
+   * This is a simplified implementation that doesn't actually stream.
    */
   override def streamCompleteChat(
     messages: Seq[ChatMessage],
     parameters: Option[ModelParameters] = None
   ): ZStream[Any, LLMError, ChatResponse] =
-    streamingChatClient match
-      case Some(client) =>
-        ZStream.async[Any, LLMError, domain.ChatResponse] { emit =>
-          ZIO.attemptBlockingIO {
-            val javaMessages = messages.map(convertToJavaMessage).asJava
-            val tokenBuffer = new StringBuilder()
-            
-            val handler = new dev.langchain4j.model.output.TokenStreamHandler {
-              override def onNext(token: String): Unit =
-                tokenBuffer.append(token)
-                val partialMessage = ChatMessage(
-                  role = Role.Assistant,
-                  content = Some(tokenBuffer.toString),
-                  metadata = Map.empty
-                )
-                
-                val partialResponse = ChatResponse(
-                  message = partialMessage,
-                  usage = TokenUsage(0, 0, 0),
-                  finishReason = None
-                )
-                
-                emit(ZIO.succeed(Chunk.single(partialResponse)))
-              
-              override def onComplete(): Unit =
-                emit(ZIO.succeed(Chunk.empty))
-              
-              override def onError(error: Throwable): Unit =
-                emit(ZIO.fail(LLMError(error)))
-            }
-            
-            parameters match
-              case Some(params) =>
-                val modelOptions = createModelOptions(params)
-                client.generate(javaMessages, handler, modelOptions)
-              case None =>
-                client.generate(javaMessages, handler)
-          }.catchAll { error =>
-            ZIO.succeed(emit(ZIO.fail(LLMError(error))))
-          }
-        }.retry(retrySchedule)
-        
-      case None =>
-        // Fall back to non-streaming if streaming client is not available
-        ZStream.fromZIO(completeChat(messages, parameters))
+    ZStream.fromZIO(completeChat(messages, parameters))
   
   /**
    * Streams a chat completion with function calling capabilities token by token.
-   *
-   * @param messages The sequence of chat messages representing the conversation history
-   * @param functions The functions that can be called by the model
-   * @param forceFunctionCall If provided, force the model to call the specified function
-   * @param parameters Optional model parameters to control the generation
-   * @return A ZStream that produces ChatResponse chunks or fails with an LLMError
+   * This is a simplified implementation that doesn't actually stream or use functions.
    */
   override def streamCompleteChatWithFunctions(
     messages: Seq[ChatMessage],
@@ -245,18 +212,11 @@ class OpenAILLM(
     forceFunctionCall: Option[String] = None,
     parameters: Option[ModelParameters] = None
   ): ZStream[Any, LLMError, ChatResponse] =
-    // Current version of langchain4j doesn't fully support streaming with function calling
-    // This is a fallback implementation that uses the non-streaming API
     ZStream.fromZIO(completeChatWithFunctions(messages, functions, forceFunctionCall, parameters))
   
   /**
    * Streams a chat completion with tool usage capabilities token by token.
-   *
-   * @param messages The sequence of chat messages representing the conversation history
-   * @param tools The tools that can be used by the model
-   * @param forceToolUse If true, force the model to use a tool
-   * @param parameters Optional model parameters to control the generation
-   * @return A ZStream that produces ChatResponse chunks or fails with an LLMError
+   * This is a simplified implementation that doesn't actually stream or use tools.
    */
   override def streamCompleteChatWithTools(
     messages: Seq[ChatMessage],
@@ -264,198 +224,105 @@ class OpenAILLM(
     forceToolUse: Boolean = false,
     parameters: Option[ModelParameters] = None
   ): ZStream[Any, LLMError, ChatResponse] =
-    streamCompleteChatWithFunctions(
-      messages,
-      tools.map(_.function),
-      if (forceToolUse && tools.nonEmpty) Some(tools.head.function.name) else None,
-      parameters
-    )
-  
-  /**
-   * Creates model options from ModelParameters.
-   *
-   * @param parameters The model parameters to convert
-   * @return A map of model options
-   */
-  private def createModelOptions(parameters: ModelParameters): JMap[String, Object] =
-    val javaMap = new java.util.HashMap[String, Object]()
-    
-    parameters.toMap.foreach { (key, value) =>
-      val javaValue = value.asMatchable match
-        case v: Double => java.lang.Double.valueOf(v)
-        case v: Int => java.lang.Integer.valueOf(v)
-        case v: Boolean => java.lang.Boolean.valueOf(v)
-        case v: String => v
-        case v: Long => java.lang.Long.valueOf(v)
-        case _ => value.toString
-      
-      javaMap.put(key, javaValue)
-    }
-    
-    javaMap
-  
-  /**
-   * Converts a FunctionDefinition to a ToolSpecification for langchain4j.
-   *
-   * @param function The function definition to convert
-   * @return The langchain4j ToolSpecification
-   */
-  private def convertToJavaToolSpecification(function: FunctionDefinition): ToolSpecification =
-    val parametersMap = new java.util.HashMap[String, Object]()
-    val properties = new java.util.HashMap[String, Object]()
-    val required = new java.util.ArrayList[String]()
-    
-    function.parameters.foreach { param =>
-      val paramProperties = new java.util.HashMap[String, Object]()
-      paramProperties.put("type", param.`type`)
-      
-      if param.description.nonEmpty then
-        paramProperties.put("description", param.description)
-      
-      if param.possibleValues.nonEmpty then
-        val enumValues = param.possibleValues.get.asJava
-        paramProperties.put("enum", enumValues)
-      
-      properties.put(param.name, paramProperties)
-      
-      if param.required then
-        required.add(param.name)
-    }
-    
-    parametersMap.put("type", "object")
-    parametersMap.put("properties", properties)
-    
-    if required.size() > 0 then
-      parametersMap.put("required", required)
-    
-    // Create a ToolParameters instance from our map
-    val toolParams = new dev.langchain4j.agent.tool.ToolParameters(parametersMap)
-    
-    ToolSpecification.builder()
-      .name(function.name)
-      .description(function.description)
-      .parameters(toolParams)
-      .build()
-  
-  /**
-   * Converts a ZIO LangChain ChatMessage to a langchain4j ChatMessage.
-   *
-   * @param message The ZIO LangChain ChatMessage to convert
-   * @return The langchain4j ChatMessage
-   */
-  private def convertToJavaMessage(message: domain.ChatMessage): LC4JChatMessage =
-    // Simplified conversion that works with basic roles
-    message.role match
-      case Role.User =>
-        UserMessage.userMessage(message.contentAsString)
-      
-      case Role.Assistant =>
-        AiMessage.aiMessage(message.contentAsString)
-      
-      case Role.System =>
-        SystemMessage.systemMessage(message.contentAsString)
-      
-      case _ =>
-        // Default to user message for other roles as fallback
-        UserMessage.userMessage(message.contentAsString)
-  
-  /**
-   * Converts a langchain4j AiMessage to a ZIO LangChain ChatResponse.
-   *
-   * @param response The langchain4j Response<AiMessage> to convert
-   * @return The ZIO LangChain ChatResponse
-   */
-  private def convertFromJavaResponse(response: Response[AiMessage]): domain.ChatResponse =
-    val aiMessage = response.content()
-    
-    // Simplified conversion without function call checks
-    val message = ChatMessage(
-      role = Role.Assistant,
-      content = Some(aiMessage.text()),
-      metadata = Map.empty
-    )
-    
-    // Safely extract token usage information
-    val tokenUsage = {
-      if (response.tokenUsage().isPresent) {
-        val usage = response.tokenUsage().get()
-        TokenUsage(
-          promptTokens = usage.inputTokenCount(),
-          completionTokens = usage.outputTokenCount(),
-          totalTokens = usage.totalTokenCount()
-        )
-      } else {
-        TokenUsage(0, 0, 0)
-      }
-    }
-    
-    // Safely extract finish reason
-    val finishReason = if (response.finishReason().isPresent) {
-      Some(response.finishReason().get().name())
-    } else {
-      None
-    }
-    
-    ChatResponse(
-      message = message,
-      usage = tokenUsage,
-      finishReason = finishReason
-    )
-  
-  /**
-   * The retry schedule for API calls.
-   */
-  private val retrySchedule = Schedule.exponential(100.milliseconds) && Schedule.recurs(3)
+    ZStream.fromZIO(completeChatWithTools(messages, tools, forceToolUse, parameters))
 
 /**
  * Companion object for OpenAILLM.
  */
 object OpenAILLM:
+  // API request and response models
+  
+  /**
+   * Represents a message in the OpenAI API format.
+   */
+  case class ApiMessage(
+    role: String,
+    content: String
+  )
+  
+  object ApiMessage:
+    given JsonEncoder[ApiMessage] = DeriveJsonEncoder.gen[ApiMessage]
+    given JsonDecoder[ApiMessage] = DeriveJsonDecoder.gen[ApiMessage]
+  
+  /**
+   * Represents a chat completion request in the OpenAI API format.
+   */
+  case class ChatCompletionRequest(
+    model: String,
+    messages: Seq[ApiMessage],
+    temperature: Double = 0.7,
+    max_tokens: Option[Int] = None,
+    stream: Boolean = false
+  )
+  
+  object ChatCompletionRequest:
+    given JsonEncoder[ChatCompletionRequest] = DeriveJsonEncoder.gen[ChatCompletionRequest]
+  
+  /**
+   * Represents a chat completion choice in the OpenAI API format.
+   */
+  case class ChatCompletionChoice(
+    index: Int,
+    message: ApiMessage,
+    finish_reason: String
+  )
+  
+  object ChatCompletionChoice:
+    given JsonDecoder[ChatCompletionChoice] = DeriveJsonDecoder.gen[ChatCompletionChoice]
+  
+  /**
+   * Represents token usage in the OpenAI API format.
+   */
+  case class ApiUsage(
+    prompt_tokens: Int,
+    completion_tokens: Int,
+    total_tokens: Int
+  )
+  
+  object ApiUsage:
+    given JsonDecoder[ApiUsage] = DeriveJsonDecoder.gen[ApiUsage]
+  
+  /**
+   * Represents a chat completion response in the OpenAI API format.
+   */
+  case class ChatCompletionResponse(
+    id: String,
+    `object`: String,
+    created: Long,
+    model: String,
+    choices: List[ChatCompletionChoice],
+    usage: ApiUsage
+  )
+  
+  object ChatCompletionResponse:
+    given JsonDecoder[ChatCompletionResponse] = DeriveJsonDecoder.gen[ChatCompletionResponse]
+  
   /**
    * Creates an OpenAILLM from an OpenAIConfig.
    *
    * @param config The OpenAI configuration
-   * @return A ZIO effect that produces an OpenAILLM or fails with a Throwable
+   * @return A ZIO effect that produces an OpenAILLM
    */
-  def make(config: OpenAIConfig): ZIO[Any, Throwable, OpenAILLM] =
-    ZIO.attempt {
-      val chatClient = OpenAiChatModel.builder()
-        .apiKey(config.apiKey)
-        .modelName(config.model)
-        .temperature(config.temperature)
-        .maxTokens(config.maxTokens.map(Integer.valueOf).orNull)
-        // .organizationId(config.organizationId.orNull) // Not supported in this version
-        .timeout(Duration.ofMillis(config.timeout.toMillis))
-        .logRequests(config.logRequests)
-        .logResponses(config.logResponses)
-        .build()
-      
-      val streamingChatClient =
-        if config.enableStreaming then
-          Some(OpenAiStreamingChatModel.builder()
-            .apiKey(config.apiKey)
-            .modelName(config.model)
-            .temperature(config.temperature)
-            .maxTokens(config.maxTokens.map(Integer.valueOf).orNull)
-            // .organizationId(config.organizationId.orNull) // Not supported in this version
-            .timeout(Duration.ofMillis(config.timeout.toMillis))
-            .logRequests(config.logRequests)
-            .logResponses(config.logResponses)
-            .build())
-        else None
-      
-      new OpenAILLM(chatClient, streamingChatClient, config)
-    }
+  def make(config: OpenAIConfig): UIO[OpenAILLM] =
+    ZIO.succeed(new OpenAILLM(config))
   
   /**
    * Creates a ZLayer that provides an LLM implementation using OpenAI.
    *
    * @return A ZLayer that requires an OpenAIConfig and provides an LLM
    */
-  val live: ZLayer[OpenAIConfig, Throwable, LLM] =
+  val live: ZLayer[OpenAIConfig, Nothing, LLM] =
     ZLayer {
       for
-        config <- ZIO.serviceWith[OpenAIConfig](identity)
+        config <- ZIO.service[OpenAIConfig]
         llm <- make(config)
       yield llm
     }
+  
+  /**
+   * Creates a ZLayer for the OpenAILLM using environment variables.
+   *
+   * @return A ZLayer that provides an LLM
+   */
+  val fromEnv: ZLayer[Any, Nothing, LLM] =
+    OpenAIConfig.layer >>> live
