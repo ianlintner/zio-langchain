@@ -7,6 +7,7 @@ import dev.langchain4j.model.openai.{OpenAiChatModel, OpenAiStreamingChatModel}
 import dev.langchain4j.model.chat.{ChatLanguageModel, StreamingChatLanguageModel}
 import dev.langchain4j.model.output.Response
 import dev.langchain4j.data.message.{AiMessage, ChatMessage => LC4JChatMessage, UserMessage, SystemMessage}
+import zio.langchain.core.domain
 import dev.langchain4j.model.openai.{OpenAiModelName, OpenAiFunctionCallMode}
 import dev.langchain4j.agent.tool.{ToolSpecification, ToolExecutionRequest}
 

@@ -100,15 +100,15 @@ Then you can run any of the examples with:
 ```
 
 Available examples:
-- `simplechat` - Basic chat application using ZIO LangChain
-- `advancedchat` - Chat with streaming responses and memory capabilities
-- `simplerag` - Retrieval-Augmented Generation with document retrieval
-- `simpleagent` - Agent that can use tools to complete tasks
-- `enhancedrag` - Enhanced RAG with improved retrieval techniques
+- `simple-chat` - Basic chat application using ZIO LangChain
+- `advanced-chat` - Chat with streaming responses and memory capabilities
+- `simple-rag` - Retrieval-Augmented Generation with document retrieval
+- `simple-agent` - Agent that can use tools to complete tasks
+- `enhanced-rag` - Enhanced RAG with improved retrieval techniques
 
 Example usage:
 ```bash
-./run-examples.sh simplechat
+OPENAI_API_KEY=your-api-key ./run-examples.sh simple-chat
 ```
 
 To see all available examples, run the script without arguments:
