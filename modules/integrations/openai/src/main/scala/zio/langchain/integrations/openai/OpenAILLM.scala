@@ -25,22 +25,19 @@ class OpenAILLM(config: OpenAIConfig) extends LLM:
    * Makes an HTTP request to the OpenAI API using ZIO HTTP
    */
   private def makeRequest(jsonBody: String): ZIO[Any, Throwable, String] = {
-    // Create headers
-    val baseHeaders = Headers(
-      Header.ContentType(MediaType.application.json),
-      Header.Authorization.Bearer(config.apiKey)
-    )
-    
-    // Add organization ID if provided
-    val headers = config.organizationId match {
-      case Some(orgId) => baseHeaders ++ Headers(Header.Custom("OpenAI-Organization", orgId))
-      case None => baseHeaders
-    }
-    
     // Log request if enabled
     if (config.logRequests) {
       println(s"OpenAI API Request: $jsonBody")
     }
+    
+    // Create headers
+    val headers = Headers(
+      Header.ContentType(MediaType.application.json),
+      Header.Authorization.Bearer(config.apiKey)
+    ) ++ (config.organizationId match {
+      case Some(orgId) => Headers(Header.Custom("OpenAI-Organization", orgId))
+      case None => Headers.empty
+    })
     
     // Create request body
     val body = Body.fromString(jsonBody)
@@ -56,10 +53,7 @@ class OpenAILLM(config: OpenAIConfig) extends LLM:
                  .orElseFail(new RuntimeException(s"Invalid URL: $apiUrl"))
         
         // Create request
-        request = Request.post(
-          body = body,
-          url = url
-        )
+        request = Request.post(body, url)
         
         // Send request
         response <- client.request(request)

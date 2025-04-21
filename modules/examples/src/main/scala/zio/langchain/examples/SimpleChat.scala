@@ -6,6 +6,7 @@ import zio.Console.*
 import zio.langchain.core.model.LLM
 import zio.langchain.core.domain.*
 import zio.langchain.core.memory.*
+import zio.langchain.core.errors.{MemoryError, LangChainError}
 import zio.langchain.integrations.openai.*
 
 /**
@@ -30,9 +31,8 @@ object SimpleChat extends ZIOAppDefault:
       memory <- ZIO.service[Memory]
       
       // Add a system message to set the context
-      _ <- memory.add(ChatMessage(
-        role = Role.System,
-        content = "You are a helpful assistant. Be concise and clear in your responses."
+      _ <- memory.add(ChatMessage.system(
+        "You are a helpful assistant. Be concise and clear in your responses."
       ))
       
       // Run the chat loop
@@ -52,19 +52,27 @@ object SimpleChat extends ZIOAppDefault:
         )
       ),
       // Volatile memory layer
-      ZLayer.succeed(
-        new Memory:
+      ZLayer.succeed {
+        new Memory {
           private val messages = scala.collection.mutable.ArrayBuffer[ChatMessage]()
           
           override def add(message: ChatMessage): ZIO[Any, MemoryError, Unit] =
-            ZIO.succeed(messages.append(message))
+            ZIO.attempt {
+              messages.append(message)
+              ()
+            }.mapError(e => MemoryError(e, "Failed to add message"))
           
           override def get: ZIO[Any, MemoryError, Seq[ChatMessage]] =
-            ZIO.succeed(messages.toSeq)
+            ZIO.attempt(messages.toSeq)
+              .mapError(e => MemoryError(e, "Failed to get messages"))
           
           override def clear: ZIO[Any, MemoryError, Unit] =
-            ZIO.succeed(messages.clear())
-      )
+            ZIO.attempt {
+              messages.clear()
+              ()
+            }.mapError(e => MemoryError(e, "Failed to clear messages"))
+        }
+      }
     )
   
   /**
@@ -78,7 +86,7 @@ object SimpleChat extends ZIOAppDefault:
   private def chatLoop(llm: LLM, memory: Memory): ZIO[Any, Throwable, Unit] =
     for
       // Prompt the user for input
-      _ <- printLine("> ", noNewLine = true)
+      _ <- printLine(">")
       input <- readLine
       
       // Check if the user wants to exit
@@ -95,7 +103,7 @@ object SimpleChat extends ZIOAppDefault:
   private def processUserInput(input: String, llm: LLM, memory: Memory): ZIO[Any, Throwable, Unit] =
     for 
       // Add the user message to memory
-      _ <- memory.add(ChatMessage(role = Role.User, content = input))
+      _ <- memory.add(ChatMessage.user(input))
       
       // Get all messages from memory
       messages <- memory.get

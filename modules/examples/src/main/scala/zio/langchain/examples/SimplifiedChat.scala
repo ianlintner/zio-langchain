@@ -55,7 +55,7 @@ object SimplifiedChat extends ZIOAppDefault:
   private def chatLoop(llm: LLM): ZIO[Any, Throwable, Unit] = {
     for {
       // Prompt the user for input
-      _ <- printLine("> ", noNewLine = true)
+      _ <- printLine(">")
       input <- readLine
       
       // Check if the user wants to exit

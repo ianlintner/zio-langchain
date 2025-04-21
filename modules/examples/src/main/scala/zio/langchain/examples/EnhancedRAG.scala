@@ -15,7 +15,11 @@ import zio.langchain.chains.LLMChain
 import zio.langchain.memory.BufferMemory
 import zio.langchain.integrations.openai.*
 
-import zio.nio.file.{Path, Files}
+import java.nio.file.{Path, Files}
+import scala.jdk.CollectionConverters.given
+
+// Define DocumentLoaderError as a subtype of LangChainError
+case class DocumentLoaderError(cause: Throwable, message: String) extends LangChainError
 
 /**
  * An enhanced Retrieval-Augmented Generation (RAG) example using ZIO LangChain.
@@ -44,7 +48,7 @@ object EnhancedRAG extends ZIOAppDefault:
       memory <- ZIO.service[Memory]
       
       // Load and process documents with proper error handling
-      documentsOrError <- loadDocuments(Path("docs"))
+      documentsOrError <- loadDocuments(Path.of("docs"))
         .catchAll { error =>
           ZIO.logWarning(s"Error loading documents: ${error.getMessage}. Using sample documents instead.") *>
           ZIO.succeed(createSampleDocuments())
@@ -79,20 +83,20 @@ object EnhancedRAG extends ZIOAppDefault:
         case (acc, (chunk, index)) =>
           for
             _ <- if index % 5 == 0 then ZIO.logInfo(s"Processing chunk ${index + 1}/${chunksOrError.size}...") else ZIO.unit
-            embedding <- embeddingModel.embedDocument(chunk)
+            docWithEmbedding <- embeddingModel.embedDocument(chunk)
               .catchAll { error =>
                 ZIO.logWarning(s"Failed to embed chunk ${index + 1}. Error: ${error.getMessage}") *>
                 // Create a fallback embedding (zeros) to prevent the entire process from failing
-                ZIO.succeed(Embedding(Vector.fill(1536)(0.0f)))
+                ZIO.succeed((chunk, Embedding(Vector.fill(1536)(0.0f))))
               }
-          yield acc :+ (chunk, embedding)
+          yield acc :+ docWithEmbedding
       }
       
       embeddedChunks <- embeddedChunksEffect
       _ <- ZIO.logInfo("Created embeddings for all chunks")
       
       // Create a retriever with a similarity threshold
-      retriever = createEnhancedRetriever(embeddedChunks)
+      retriever = createEnhancedRetriever(embeddedChunks, embeddingModel)
       
       // Create a RAG chain using the LLMChain
       ragChain <- createEnhancedRAGChain(llm, retriever, memory)
@@ -133,14 +137,15 @@ object EnhancedRAG extends ZIOAppDefault:
    * @return A Retriever instance
    */
   private def createEnhancedRetriever(
-    documents: Seq[(Document, Embedding)]
+    documents: Seq[(Document, Embedding)],
+    embeddingModel: EmbeddingModel
   ): Retriever =
     new Retriever:
       override def retrieve(query: String, maxResults: Int): ZIO[Any, RetrieverError, Seq[Document]] =
         for
           // Embed the query
-          queryEmbedding <- ZIO.serviceWithZIO[EmbeddingModel](_.embedQuery(query))
-            .mapError(e => RetrieverError(e.cause, s"Failed to embed query: ${e.message}"))
+          queryEmbedding <- embeddingModel.embedQuery(query)
+            .mapError(e => RetrieverError(e, s"Failed to embed query: ${e}"))
             
           // Find most similar documents
           similarities = documents.map { case (doc, embedding) =>
@@ -177,24 +182,22 @@ object EnhancedRAG extends ZIOAppDefault:
     llm: LLM, 
     retriever: Retriever,
     memory: Memory
-  ): ZIO[Any, Nothing, Chain[Any, LangChainError, String, String]] =
-    for
-      // Chain for memory and retrieval
-      queryProcessingChain = Chain[Any, LangChainError, String, (String, Seq[ChatMessage], Seq[Document])] { query =>
-        for
-          // Get conversation history
-          chatHistory <- memory.get.mapError(e => e: LangChainError)
-          
-          // Retrieve relevant documents
-          retrievedDocs <- retriever.retrieve(query, maxResults = 5)
-            .mapError(e => e: LangChainError)
-            .tap(docs => ZIO.logInfo(s"Retrieved ${docs.size} relevant documents"))
-            
-        yield (query, chatHistory, retrievedDocs)
-      }
-      
-      // Chain for constructing the prompt with retrieved content
-      promptConstructionChain = Chain[Any, LangChainError, (String, Seq[ChatMessage], Seq[Document]), Seq[ChatMessage]] { 
+  ): ZIO[Any, Nothing, Chain[Any, LangChainError, String, String]] = {
+    // Chain for memory and retrieval
+    val queryProcessingChain = Chain[Any, LangChainError, String, (String, Seq[ChatMessage], Seq[Document])] { query =>
+      for {
+        // Get conversation history
+        chatHistory <- memory.get.mapError(e => e: LangChainError)
+        
+        // Retrieve relevant documents
+        retrievedDocs <- retriever.retrieve(query, maxResults = 5)
+          .mapError(e => e: LangChainError)
+          .tap(docs => ZIO.logInfo(s"Retrieved ${docs.size} relevant documents"))
+      } yield (query, chatHistory, retrievedDocs)
+    }
+    
+    // Chain for constructing the prompt with retrieved content
+    val promptConstructionChain = Chain[Any, LangChainError, (String, Seq[ChatMessage], Seq[Document]), Seq[ChatMessage]] {
         case (query, chatHistory, docs) =>
           ZIO.succeed {
             // Create context message from retrieved documents
@@ -234,7 +237,7 @@ object EnhancedRAG extends ZIOAppDefault:
       }
       
       // Chain for getting the response from the LLM and storing in memory
-      responseChain = Chain[Any, LangChainError, Seq[ChatMessage], String] { messages =>
+      val responseChain = Chain[Any, LangChainError, Seq[ChatMessage], String] { messages =>
         // Stream the response for a better user experience
         for
           // Print "Thinking..." before starting generation
@@ -266,9 +269,21 @@ object EnhancedRAG extends ZIOAppDefault:
           _ <- ZIO.logInfo("")
         yield answer
       }
-    yield
-      // Combine the chains
-      queryProcessingChain >>> promptConstructionChain >>> responseChain
+    
+    // Combine the chains
+    val fullChain = Chain[Any, LangChainError, String, String] { query =>
+      for {
+        // Process the query to get context and history
+        result <- queryProcessingChain.run(query)
+        // Use the result to construct the prompt
+        messages <- promptConstructionChain.run(result)
+        // Generate the response
+        answer <- responseChain.run(messages)
+      } yield answer
+    }
+    
+    ZIO.succeed(fullChain)
+  }
   
   /**
    * Loads documents from text files in a directory.
@@ -279,27 +294,47 @@ object EnhancedRAG extends ZIOAppDefault:
   private def loadDocuments(directory: Path): ZIO[Any, DocumentLoaderError, Seq[Document]] =
     for {
       // Check if directory exists
-      exists <- Files.exists(directory)
-      isDir <- Files.isDirectory(directory).when(exists).map(_.getOrElse(false))
+      exists <- ZIO.attempt(Files.exists(directory))
+                  .mapError(e => DocumentLoaderError(e, s"Failed to check if directory exists: ${e.getMessage}"))
+      isDir <- ZIO.attempt(Files.isDirectory(directory))
+                 .mapError(e => DocumentLoaderError(e, s"Failed to check if path is directory: ${e.getMessage}"))
+                 .when(exists)
+                 .map(_.getOrElse(false))
       
       // List files in directory if it exists and is a directory
       docs <- if (exists && isDir) {
         for {
           // List all files in the directory
-          paths <- Files.list(directory)
-            .map(paths => paths.filter(path =>
-              path.toString.endsWith(".txt") || path.toString.endsWith(".md")
-            ))
+          files <- ZIO.attempt {
+                     import scala.jdk.CollectionConverters.given
+                     val stream = Files.list(directory)
+                     try {
+                       stream.iterator().asScala.toList
+                         .filter(path => path.toString.endsWith(".txt") || path.toString.endsWith(".md"))
+                     } finally {
+                       stream.close()
+                     }
+                   }
+                   .mapError(e => DocumentLoaderError(e, s"Failed to list files in directory: ${e.getMessage}"))
           
           // Read each file and create documents
-          docs <- ZIO.foreach(paths.zipWithIndex) { case (path, index) =>
+          docs <- ZIO.foreach(files.zipWithIndex) { case (path, index) =>
             for {
-              content <- Files.readAllLines(path).map(_.mkString("\n"))
-              filename <- path.filename
+              // Read file content as a string
+              content <- ZIO.attempt {
+                           import scala.jdk.CollectionConverters.given
+                           val lines = Files.readAllLines(path).asScala
+                           lines.mkString("\n")
+                         }
+                         .mapError(e => DocumentLoaderError(e, s"Failed to read file ${path}: ${e.getMessage}"))
+              
+              // Get filename
+              filename <- ZIO.attempt(path.getFileName.toString)
+                            .mapError(e => DocumentLoaderError(e, s"Failed to get filename: ${e.getMessage}"))
             } yield Document(
               id = s"doc-${index + 1}",
               content = content,
-              metadata = Map("source" -> filename.toString, "path" -> path.toString)
+              metadata = Map("source" -> filename, "path" -> path.toString)
             )
           }
         } yield docs
@@ -307,7 +342,6 @@ object EnhancedRAG extends ZIOAppDefault:
         ZIO.succeed(Seq.empty[Document])
       }
     } yield docs
-    .mapError(e => DocumentLoaderError(e, s"Failed to load documents from $directory"))
   
   /**
    * Creates sample documents for demonstration purposes.
@@ -402,7 +436,7 @@ object EnhancedRAG extends ZIOAppDefault:
             
             // Process the question with error handling
             response <- ragChain.run(question).catchAll { error =>
-              ZIO.logError(s"\nError: ${error.message}") *>
+              ZIO.logError(s"\nError: ${error}") *>
               // Provide a graceful fallback
               memory.get.flatMap { messages =>
                 llm.completeChat(

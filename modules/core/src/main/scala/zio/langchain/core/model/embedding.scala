@@ -19,6 +19,16 @@ trait EmbeddingModel:
   def embed(text: String): ZIO[Any, EmbeddingError, Embedding]
   
   /**
+   * Generates an embedding for a query.
+   * This is an alias for embed that makes the intent clearer when used for retrieval.
+   *
+   * @param query The query text to embed
+   * @return A ZIO effect that produces an Embedding or fails with an EmbeddingError
+   */
+  def embedQuery(query: String): ZIO[Any, EmbeddingError, Embedding] =
+    embed(query)
+  
+  /**
    * Generates embeddings for multiple texts.
    *
    * @param texts The sequence of texts to embed
@@ -72,6 +82,15 @@ object EmbeddingModel:
    */
   def embedAll(texts: Seq[String]): ZIO[EmbeddingModel, EmbeddingError, Seq[Embedding]] =
     ZIO.serviceWithZIO[EmbeddingModel](_.embedAll(texts))
+    
+  /**
+   * Generates an embedding for a query using the EmbeddingModel service.
+   *
+   * @param query The query text to embed
+   * @return A ZIO effect that requires an EmbeddingModel and produces an Embedding or fails with an EmbeddingError
+   */
+  def embedQuery(query: String): ZIO[EmbeddingModel, EmbeddingError, Embedding] =
+    ZIO.serviceWithZIO[EmbeddingModel](_.embedQuery(query))
   
   /**
    * Generates an embedding for a document using the EmbeddingModel service.

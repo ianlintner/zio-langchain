@@ -27,6 +27,7 @@ lazy val commonDependencies = Seq(
   "dev.zio" %% "zio-http" % "3.0.0-RC2",
   "dev.zio" %% "zio-cache" % "0.2.3",
   "dev.zio" %% "zio-logging" % "2.1.16",
+  "dev.zio" %% "zio-nio" % "2.0.2",
   "dev.zio" %% "zio-test" % zioVersion % Test,
   "dev.zio" %% "zio-test-sbt" % zioVersion % Test,
   "dev.zio" %% "zio-test-magnolia" % zioVersion % Test

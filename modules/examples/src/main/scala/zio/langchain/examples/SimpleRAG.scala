@@ -9,8 +9,9 @@ import zio.langchain.core.document.*
 import zio.langchain.core.domain.*
 import zio.langchain.core.chain.*
 import zio.langchain.integrations.openai.*
+import zio.langchain.core.errors.{LangChainError, RetrieverError, LLMError}
 
-import zio.nio.file.{Path}
+import java.nio.file.{Path, Files}
 
 /**
  * A simple Retrieval-Augmented Generation (RAG) example using ZIO LangChain.
@@ -37,7 +38,7 @@ object SimpleRAG extends ZIOAppDefault:
       embeddingModel <- ZIO.service[EmbeddingModel]
       
       // Load and process documents
-      documents <- loadDocuments(Path("docs"))
+      documents <- loadDocuments(Path.of("docs"))
       _ <- ZIO.logInfo(s"Loaded ${documents.size} documents")
       
       // Split documents into chunks
@@ -48,7 +49,6 @@ object SimpleRAG extends ZIOAppDefault:
       // Create embeddings for the chunks
       embeddedChunks <- embeddingModel.embedDocuments(chunks)
       _ <- ZIO.logInfo("Created embeddings for all chunks")
-      
       // Create an in-memory retriever
       retriever = new InMemoryRetriever(embeddedChunks)
       
@@ -88,7 +88,7 @@ object SimpleRAG extends ZIOAppDefault:
    * @param directory The directory containing text files
    * @return A ZIO effect that produces a sequence of documents
    */
-  private def loadDocuments(directory: Path): ZIO[Any, Throwable, Seq[Document]] =
+  private def loadDocuments(directory: Path): ZIO[Any, LangChainError, Seq[Document]] =
     // This is a simplified implementation
     // In a real application, you would use DocumentLoader to load files from the directory
     ZIO.succeed(
@@ -122,15 +122,15 @@ object SimpleRAG extends ZIOAppDefault:
    * @param retriever The retriever service
    * @return A Chain that takes a question and produces an answer
    */
-  private def createRAGChain(llm: LLM, retriever: Retriever): Chain[Any, Throwable, String, String] =
+  private def createRAGChain(llm: LLM, retriever: Retriever): Chain[Any, LangChainError, String, String] =
     // Create a chain that retrieves relevant documents
-    val retrievalChain = Chain[Any, Throwable, String, Seq[Document]] { query =>
+    val retrievalChain = Chain[Any, LangChainError, String, Seq[Document]] { query =>
       retriever.retrieve(query, maxResults = 3)
-        .mapError(e => e.cause)
+        .mapError(e => e: LangChainError)
     }
     
     // Create a chain that formats the prompt with the retrieved documents
-    val promptChain = Chain[Any, Throwable, Seq[Document], String] { documents =>
+    val promptChain = Chain[Any, LangChainError, Seq[Document], String] { documents =>
       val docsText = documents.map(doc => s"Content: ${doc.content}").mkString("\n\n")
       ZIO.succeed(
         s"""Answer the question based only on the following context:
@@ -144,20 +144,20 @@ object SimpleRAG extends ZIOAppDefault:
     }
     
     // Create a chain that replaces the {{question}} placeholder with the actual question
-    val templateChain = Chain[Any, Throwable, (String, String), String] { case (template, question) =>
+    val templateChain = Chain[Any, LangChainError, (String, String), String] { case (template, question) =>
       ZIO.succeed(template.replace("{{question}}", question))
     }
     
     // Create a chain that sends the prompt to the LLM
-    val llmChain = Chain[Any, Throwable, String, String] { prompt =>
+    val llmChain = Chain[Any, LangChainError, String, String] { prompt =>
       llm.complete(prompt)
-        .mapError(e => e.cause)
+        .mapError(e => e: LangChainError)
     }
     
     // Combine the chains
-    Chain[Any, Throwable, String, (String, Seq[Document])] { query =>
+    Chain[Any, LangChainError, String, (String, Seq[Document])] { query =>
       retrievalChain.run(query).map(docs => (query, docs))
-    } >>> Chain[Any, Throwable, (String, Seq[Document]), (String, String)] { case (query, docs) =>
+    } >>> Chain[Any, LangChainError, (String, Seq[Document]), (String, String)] { case (query, docs) =>
       promptChain.run(docs).map(template => (template, query))
     } >>> templateChain >>> llmChain
   
@@ -179,7 +179,7 @@ object SimpleRAG extends ZIOAppDefault:
    * @param ragChain The RAG chain
    * @return A ZIO effect that completes when the user exits
    */
-  private def qaLoop(ragChain: Chain[Any, Throwable, String, String]): ZIO[Any, Throwable, Unit] =
+  private def qaLoop(ragChain: Chain[Any, LangChainError, String, String]): ZIO[Any, Throwable, Unit] =
     for
       // Prompt the user for a question
       _ <- ZIO.logInfo("\nEnter your question (or 'exit' to quit):")

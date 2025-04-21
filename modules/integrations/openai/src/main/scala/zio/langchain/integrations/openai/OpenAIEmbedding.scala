@@ -106,7 +106,17 @@ class OpenAIEmbedding(config: OpenAIEmbeddingConfig) extends EmbeddingModel:
    * Makes an HTTP request to the OpenAI API using ZIO HTTP
    */
   private def makeRequest(jsonBody: String): ZIO[Any, Throwable, String] = {
-  
+    // Create headers
+    val headers = Headers(
+      Header.ContentType(MediaType.application.json),
+      Header.Authorization.Bearer(config.apiKey)
+    ) ++ (config.organizationId match {
+      case Some(orgId) => Headers(Header.Custom("OpenAI-Organization", orgId))
+      case None => Headers.empty
+    })
+    
+    // Create request body
+    val body = Body.fromString(jsonBody)
     
     // Create and send request
     ZIO.scoped {
@@ -117,20 +127,11 @@ class OpenAIEmbedding(config: OpenAIEmbeddingConfig) extends EmbeddingModel:
         // Parse URL
         url <- ZIO.fromEither(URL.decode(apiUrl))
                  .orElseFail(new RuntimeException(s"Invalid URL: $apiUrl"))
-        body = Body.fromString(jsonBody)
-        baseHeaders = Headers(
-          Header.ContentType(MediaType.application.json),
-          Header.Authorization.Bearer(config.apiKey)
-        )
-        headers = config.organizationId match {
-          case Some(orgId) => baseHeaders ++ Headers(Header.Custom("OpenAI-Organization", orgId))
-          case None => baseHeaders
-        }
+        
         // Create request
-        request = Request.post(
-          body = body,
-          url = url
-        )
+        request = Request.post(body, url)
+        
+        // Send request
         response <- client.request(request)
                       .timeoutFail(new RuntimeException("Request timed out"))(config.timeout)
         
