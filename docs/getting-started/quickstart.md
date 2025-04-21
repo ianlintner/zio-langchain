@@ -7,131 +7,178 @@ version: 0.1.0
 
 # Quick Start Guide
 
-This guide will help you quickly build your first ZIO LangChain application. We'll create a simple chat application that interacts with an LLM.
+This guide will help you get up and running with ZIO LangChain quickly, demonstrating basic usage patterns with practical examples.
 
 ## Table of Contents
 
 - [Prerequisites](#prerequisites)
-- [Project Setup](#project-setup)
-- [Simple Chat Example](#simple-chat-example)
-- [Running the Example](#running-the-example)
-- [Building a Retrieval-Augmented Generation (RAG) System](#building-a-retrieval-augmented-generation-rag-system)
+- [Basic Chat Example](#basic-chat-example)
+- [Step-by-Step Walkthrough](#step-by-step-walkthrough)
+- [RAG Example](#rag-example)
+- [Common Patterns](#common-patterns)
 - [Next Steps](#next-steps)
 
 ## Prerequisites
 
-Before starting, ensure you have:
+Before you begin, ensure you have:
 
-1. [Installed](installation.md) ZIO LangChain
-2. [Configured](configuration.md) your API keys
+1. Added ZIO LangChain dependencies to your project (see [Installation](installation.md))
+2. Obtained API keys for your LLM provider (see [Configuration](configuration.md))
+3. Set up a basic Scala project with SBT
 
-## Project Setup
+## Basic Chat Example
 
-Create a new Scala project with SBT:
-
-```bash
-sbt new scala/scala3.g8
-```
-
-Then add the required dependencies to your `build.sbt` file:
-
-```scala
-val zioVersion = "2.0.19"
-val zioLangchainVersion = "0.1.0-SNAPSHOT"
-
-libraryDependencies ++= Seq(
-  "dev.zio" %% "zio" % zioVersion,
-  "dev.zio" %% "zio-langchain-core" % zioLangchainVersion,
-  "dev.zio" %% "zio-langchain-openai" % zioLangchainVersion
-)
-```
-
-## Simple Chat Example
-
-Let's create a simple chat application that interacts with an LLM. Create a file named `SimpleChat.scala`:
+Here's a complete example of a simple chat application using ZIO LangChain with OpenAI:
 
 ```scala
 import zio.*
-import zio.langchain.core.model.LLM
+import zio.Console.*
+import zio.langchain.core.model.*
 import zio.langchain.core.domain.*
 import zio.langchain.integrations.openai.*
 
-object SimpleChat extends ZIOAppDefault:
-  override def run =
-    for
-      // Get the LLM service
-      llm <- ZIO.service[LLM]
+object SimpleChat extends ZIOAppDefault {
+  val program = for {
+    // Get LLM service
+    llm <- ZIO.service[LLM]
+    
+    // Welcome message
+    _ <- printLine("Welcome to ZIO LangChain Chat!")
+    _ <- printLine("Type 'exit' to quit.")
+    
+    // Chat loop
+    _ <- (for {
+      // Get user input
+      _ <- printLine("\nYou: ")
+      input <- readLine
       
-      // Prompt for user input
-      _ <- Console.printLine("Enter your message (or 'exit' to quit):")
-      
-      // Chat loop
-      _ <- (for
-        userInput <- Console.readLine
-        _ <- ZIO.when(userInput.trim.toLowerCase != "exit") {
-          for
-            // Send the user input to the LLM
-            response <- llm.complete(userInput)
-            
-            // Display the response
-            _ <- Console.printLine(s"AI: $response")
-            
-            // Prompt for next input
-            _ <- Console.printLine("\nEnter your message (or 'exit' to quit):")
-          yield ()
-        }
-      ).repeatWhile(input => input.trim.toLowerCase != "exit")
-    yield ()
-    .provide(
-      // Provide the LLM implementation
-      OpenAILLM.live,
-      
-      // Provide the configuration
-      ZLayer.succeed(
-        OpenAIConfig(
-          apiKey = sys.env.getOrElse("OPENAI_API_KEY", ""),
-          model = "gpt-3.5-turbo"
-        )
+      // Check for exit condition
+      _ <- ZIO.when(input.trim.toLowerCase != "exit") {
+        for {
+          // Get LLM response
+          response <- llm.complete(input)
+          
+          // Display response
+          _ <- printLine(s"\nAI: $response")
+        } yield ()
+      }
+    } yield input).repeatWhile(input => input.trim.toLowerCase != "exit")
+    
+    // Goodbye message
+    _ <- printLine("\nThank you for using ZIO LangChain Chat!")
+  } yield ()
+  
+  override def run = program.provide(
+    // Provide LLM implementation
+    OpenAILLM.live,
+    // Provide configuration
+    ZLayer.succeed(
+      OpenAIConfig(
+        apiKey = sys.env.getOrElse("OPENAI_API_KEY", ""),
+        model = "gpt-3.5-turbo"
       )
     )
+  )
+}
 ```
 
-This simple application:
-
-1. Creates a ZIO application using `ZIOAppDefault`
-2. Sets up a chat loop that:
-   - Prompts the user for input
-   - Sends the input to the LLM
-   - Displays the response
-   - Repeats until the user types "exit"
-3. Provides the necessary dependencies:
-   - OpenAI LLM implementation
-   - Configuration with API key from environment variables
-
-## Running the Example
-
-Run the example with:
+Run this example with:
 
 ```bash
 export OPENAI_API_KEY=your-api-key
 sbt run
 ```
 
-You should see a prompt where you can enter messages and receive responses from the AI.
+## Step-by-Step Walkthrough
 
-## Building a Retrieval-Augmented Generation (RAG) System
+Let's break down the example above:
 
-Let's build a more advanced example that demonstrates Retrieval-Augmented Generation. Create a file named `SimpleRAG.scala`:
+### 1. Import Dependencies
 
 ```scala
 import zio.*
+import zio.Console.*
+import zio.langchain.core.model.*
+import zio.langchain.core.domain.*
+import zio.langchain.integrations.openai.*
+```
+
+These imports provide access to ZIO, Console utilities, and ZIO LangChain components.
+
+### 2. Create ZIO Program
+
+```scala
+val program = for {
+  // Get LLM service
+  llm <- ZIO.service[LLM]
+  
+  // Welcome message
+  _ <- printLine("Welcome to ZIO LangChain Chat!")
+  _ <- printLine("Type 'exit' to quit.")
+  
+  // Chat loop
+  _ <- (for {
+    // Get user input
+    _ <- printLine("\nYou: ")
+    input <- readLine
+    
+    // Check for exit condition
+    _ <- ZIO.when(input.trim.toLowerCase != "exit") {
+      for {
+        // Get LLM response
+        response <- llm.complete(input)
+        
+        // Display response
+        _ <- printLine(s"\nAI: $response")
+      } yield ()
+    }
+  } yield input).repeatWhile(input => input.trim.toLowerCase != "exit")
+  
+  // Goodbye message
+  _ <- printLine("\nThank you for using ZIO LangChain Chat!")
+} yield ()
+```
+
+This defines a ZIO effect that:
+- Obtains the LLM service from the environment
+- Displays welcome messages
+- Enters a chat loop that continues until the user types "exit"
+- For each user input, sends it to the LLM and displays the response
+
+### 3. Provide Dependencies
+
+```scala
+override def run = program.provide(
+  // Provide LLM implementation
+  OpenAILLM.live,
+  // Provide configuration
+  ZLayer.succeed(
+    OpenAIConfig(
+      apiKey = sys.env.getOrElse("OPENAI_API_KEY", ""),
+      model = "gpt-3.5-turbo"
+    )
+  )
+)
+```
+
+This provides the necessary dependencies to run the program:
+- `OpenAILLM.live`: The live implementation of the LLM service
+- Configuration for OpenAI with API key and model
+
+## RAG Example
+
+Here's a quick example of Retrieval-Augmented Generation (RAG):
+
+```scala
+import zio.*
+import zio.Console.*
 import zio.langchain.core.model.*
 import zio.langchain.core.retriever.*
 import zio.langchain.core.document.*
 import zio.langchain.core.domain.*
 import zio.langchain.integrations.openai.*
 
-object SimpleRAG extends ZIOAppDefault:
+object SimpleRAG extends ZIOAppDefault {
   // Sample documents
   val documents = Seq(
     Document(
@@ -150,16 +197,16 @@ object SimpleRAG extends ZIOAppDefault:
       metadata = Map("source" -> "docs")
     )
   )
-
-  // Create a simple in-memory retriever
+  
+  // Simple in-memory retriever
   def createRetriever(
     embeddedDocs: Seq[(Document, Embedding)]
-  ): Retriever = new Retriever:
+  ): Retriever = new Retriever {
     override def retrieve(
       query: String, 
       maxResults: Int = 2
     ): ZIO[Any, RetrieverError, Seq[Document]] =
-      for
+      for {
         embeddingModel <- ZIO.service[EmbeddingModel]
         queryEmbedding <- embeddingModel.embed(query)
           .mapError(e => RetrieverError(e))
@@ -171,88 +218,164 @@ object SimpleRAG extends ZIOAppDefault:
         
         // Sort by similarity (highest first) and take top results
         topDocs = similarities.sortBy(-_._2).take(maxResults).map(_._1)
-      yield topDocs
-
-  override def run =
-    for
-      // Get the embedding model
-      embeddingModel <- ZIO.service[EmbeddingModel]
+      } yield topDocs
+  }
+  
+  val program = for {
+    // Get services
+    embeddingModel <- ZIO.service[EmbeddingModel]
+    llm <- ZIO.service[LLM]
+    
+    // Create document embeddings
+    embeddedDocs <- embeddingModel.embedDocuments(documents)
+      .mapError(e => new RuntimeException(s"Embedding error: ${e.message}", e))
+    
+    // Create retriever
+    retriever = createRetriever(embeddedDocs)
+    
+    // Welcome message
+    _ <- printLine("RAG System: Ask a question about ZIO")
+    _ <- printLine("Type 'exit' to quit")
+    
+    // Query loop
+    _ <- (for {
+      // Get user query
+      _ <- printLine("\nQuestion: ")
+      query <- readLine
       
-      // Get the LLM
-      llm <- ZIO.service[LLM]
-      
-      // Create embeddings for documents
-      embeddedDocs <- embeddingModel.embedDocuments(documents)
-        .mapError(e => new RuntimeException(s"Embedding error: ${e.message}", e))
-      
-      // Create retriever
-      retriever = createRetriever(embeddedDocs)
-      
-      // Chat loop
-      _ <- Console.printLine("Enter your question about ZIO (or 'exit' to quit):")
-      _ <- (for
-        userInput <- Console.readLine
-        _ <- ZIO.when(userInput.trim.toLowerCase != "exit") {
-          for
-            // Retrieve relevant documents
-            relevantDocs <- retriever.retrieve(userInput)
-            
-            // Format context for the prompt
-            context = relevantDocs.map(_.content).mkString("\n\n")
-            
-            // Create prompt with context
-            prompt = s"""Based on the following information:
+      // Check for exit condition
+      _ <- ZIO.when(query.trim.toLowerCase != "exit") {
+        for {
+          // Retrieve relevant documents
+          relevantDocs <- retriever.retrieve(query)
+          
+          // Format context for the prompt
+          context = relevantDocs.map(_.content).mkString("\n\n")
+          
+          // Create prompt with context
+          prompt = s"""Based on the following information:
                       |
                       |$context
                       |
-                      |Question: $userInput
+                      |Question: $query
                       |
                       |Answer:""".stripMargin
-            
-            // Get response from LLM
-            response <- llm.complete(prompt)
-            
-            // Display response
-            _ <- Console.printLine(s"AI: $response")
-            _ <- Console.printLine("\nEnter your question about ZIO (or 'exit' to quit):")
-          yield ()
-        }
-      ).repeatWhile(input => input.trim.toLowerCase != "exit")
-    yield ()
-    .provide(
-      OpenAILLM.live,
-      OpenAIEmbedding.live,
-      ZLayer.succeed(
-        OpenAIConfig(
-          apiKey = sys.env.getOrElse("OPENAI_API_KEY", ""),
-          model = "gpt-3.5-turbo"
-        )
-      ),
-      ZLayer.succeed(
-        OpenAIEmbeddingConfig(
-          apiKey = sys.env.getOrElse("OPENAI_API_KEY", ""),
-          model = "text-embedding-ada-002"
-        )
+          
+          // Get response from LLM
+          response <- llm.complete(prompt)
+          
+          // Display response
+          _ <- printLine(s"\nAnswer: $response")
+        } yield ()
+      }
+    } yield query).repeatWhile(query => query.trim.toLowerCase != "exit")
+    
+    // Goodbye message
+    _ <- printLine("\nThank you for using the RAG system!")
+  } yield ()
+  
+  override def run = program.provide(
+    OpenAILLM.live,
+    OpenAIEmbedding.live,
+    ZLayer.succeed(
+      OpenAIConfig(
+        apiKey = sys.env.getOrElse("OPENAI_API_KEY", ""),
+        model = "gpt-3.5-turbo"
+      )
+    ),
+    ZLayer.succeed(
+      OpenAIEmbeddingConfig(
+        apiKey = sys.env.getOrElse("OPENAI_API_KEY", ""),
+        model = "text-embedding-ada-002"
       )
     )
+  )
+}
 ```
 
-This RAG example:
+## Common Patterns
 
-1. Defines sample documents (in a real app, you'd load these from files)
-2. Creates embeddings for the documents
-3. Implements a simple retriever that finds similar documents using cosine similarity
-4. Retrieves relevant documents based on the user's query
-5. Creates a prompt with the retrieved context
-6. Sends the prompt to the LLM to generate a response
+### Chat with History
+
+```scala
+import zio.langchain.core.memory.*
+
+// Create a memory component
+val memory = new VolatileMemory()
+
+// Add system message
+memory.add(ChatMessage(Role.System, "You are a helpful assistant."))
+
+// Add user message and get response
+for {
+  _ <- memory.add(ChatMessage(Role.User, userInput))
+  history <- memory.get
+  response <- llm.completeChat(history)
+  _ <- memory.add(response.message)
+} yield response.message.content
+```
+
+### Streaming Responses
+
+```scala
+import zio.stream.*
+
+// Configure for streaming
+val streamingConfig = OpenAIConfig(
+  apiKey = sys.env.getOrElse("OPENAI_API_KEY", ""),
+  model = "gpt-3.5-turbo",
+  streaming = true
+)
+
+// Get streaming response
+for {
+  llm <- ZIO.service[StreamingLLM]
+  stream <- llm.completeStreaming(prompt)
+  _ <- stream.foreach { chunk =>
+    Console.print(chunk).orDie
+  }
+} yield ()
+```
+
+### Simple Agent
+
+```scala
+import zio.langchain.core.agent.*
+import zio.langchain.core.tool.*
+
+// Create tools
+val calculatorTool = Tool.make(
+  "calculator", 
+  "Calculate mathematical expressions"
+) { input =>
+  ZIO.attempt {
+    val expr = input.trim
+    val result = /* calculation logic */
+    result.toString
+  }
+}
+
+// Create agent
+val agent = ReActAgent(
+  llm = llm,
+  tools = Map("calculator" -> calculatorTool),
+  maxIterations = 5
+)
+
+// Use agent
+agent.run("What is the square root of 144 plus 10?")
+```
 
 ## Next Steps
 
-Now that you've built your first ZIO LangChain applications, you can:
+Now that you've seen the basics, you can:
 
-1. Explore more [Core Concepts](../core-concepts/llm-integration.md)
-2. Learn about different [Components](../components/models/index.md)
-3. Check the [Examples](../examples/index.md) for more advanced use cases
-4. Review the [API Documentation](../api/index.md) for detailed reference
+1. Explore [Core Concepts](../core-concepts/index.md) for deeper understanding
+2. Check out more [Examples](../examples/index.md) for inspiration
+3. Learn about specific components:
+   - [LLM Integration](../core-concepts/llm-integration.md)
+   - [Chains](../core-concepts/chains.md)
+   - [Agents](../core-concepts/agents.md)
+   - [Retrievers](../core-concepts/retrieval.md)
 
-For more complex applications, see the examples directory in the project repository, which contains implementations of chat systems, RAG applications, and agent-based systems.
+For a complete application, see the [Simple RAG Example](../examples/simple-rag.md) in the examples section.

@@ -5,75 +5,138 @@ date: April 21, 2025
 version: 0.1.0
 ---
 
-# ZIO LangChain Documentation
+# ZIO LangChain
 
-A comprehensive Scala 3 library that provides a ZIO-based langchain, offering a purely functional effect based, type-safe API for building LLM-powered applications.
-
-## Table of Contents
-
-- [Overview](#overview)
-- [Getting Started](#getting-started)
-- [Core Concepts](#core-concepts)
-- [Components](#components)
-- [Examples](#examples)
-- [API Reference](#api-reference)
-- [Design Documentation](#design-documentation)
+Welcome to the official documentation for ZIO LangChain, a Scala library that provides ZIO-based bindings for langchain4j, enabling you to build robust, typesafe LLM applications with ZIO.
 
 ## Overview
 
-ZIO LangChain is a Scala 3 library that wraps langchain4j in a purely functional, ZIO-based API. It provides a type-safe, composable way to build LLM-powered applications with proper resource management via ZIO.
+ZIO LangChain combines the power of [ZIO](https://zio.dev/) - a type-safe, composable library for asynchronous and concurrent programming in Scala - with the capabilities of langchain4j, creating a purely functional and type-safe API for building Large Language Model (LLM) applications.
 
-### Key Features
+```ascii
+┌─────────────────────────────────────────────────────────────┐
+│                                                             │
+│                       ZIO LangChain                         │
+│                                                             │
+│  ┌─────────┐   ┌─────────┐   ┌─────────┐   ┌─────────────┐  │
+│  │   LLMs  │   │ Chains  │   │ Agents  │   │ Retrievers  │  │
+│  └─────────┘   └─────────┘   └─────────┘   └─────────────┘  │
+│                                                             │
+│  ┌─────────┐   ┌─────────┐   ┌─────────┐   ┌─────────────┐  │
+│  │ Memory  │   │  Tools  │   │  Docs   │   │ Embeddings  │  │
+│  └─────────┘   └─────────┘   └─────────┘   └─────────────┘  │
+│                                                             │
+│           Built on ZIO for pure functional LLMs             │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Key Features
 
 - **Pure Functional**: All operations are represented as ZIO effects
-- **Type-Safe**: Leverage Scala 3's type system for safer code
-- **Composable**: Build complex workflows by composing simple components
-- **Resource-Safe**: Proper resource management via ZIO
-- **Streaming Support**: Stream tokens and process large documents efficiently
-- **Comprehensive**: Support for all major langchain4j features
+- **Type Safety**: Strong type safety throughout the API
+- **Composability**: Easy composition of components via ZIO
+- **Resource Safety**: Proper resource management via ZIO
+- **Streaming**: Support for streaming responses
+- **Concurrency**: Powerful concurrency patterns via ZIO
+- **Error Handling**: Comprehensive error hierarchy and handling
+
+## Documentation Structure
+
+The documentation is organized into the following sections:
+
+- **[Getting Started](getting-started/index.md)**: Installation, configuration, and quick start guides
+- **[Core Concepts](core-concepts/index.md)**: Detailed explanations of the main abstractions
+- **[Examples](examples/index.md)**: Practical examples demonstrating library usage
+- **[Design](design/architecture.md)**: Architectural overview and design decisions
+- **API Reference**: Comprehensive API documentation
+
+## Quick Navigation
+
+| If you want to... | Go to... |
+|-------------------|----------|
+| Install the library | [Installation Guide](getting-started/installation.md) |
+| Configure providers | [Configuration Guide](getting-started/configuration.md) |
+| Get started quickly | [Quick Start Guide](getting-started/quickstart.md) |
+| Understand core concepts | [Core Concepts](core-concepts/index.md) |
+| See practical examples | [Examples](examples/index.md) |
+| Learn about the architecture | [Architecture Overview](design/architecture.md) |
 
 ## Getting Started
 
-- [Installation](getting-started/installation.md)
-- [Configuration](getting-started/configuration.md)
-- [Quick Start Guide](getting-started/quickstart.md)
+To start using ZIO LangChain, add the following dependencies to your build.sbt:
 
-## Core Concepts
+```scala
+// Core library
+libraryDependencies += "dev.zio" %% "zio-langchain-core" % "0.1.0"
 
-- [LLM Integration](core-concepts/llm-integration.md)
-- [Embeddings](core-concepts/embeddings.md)
-- [Memory](core-concepts/memory.md)
-- [Documents](core-concepts/documents.md)
-- [Retrieval](core-concepts/retrieval.md)
-- [Chains](core-concepts/chains.md)
-- [Agents](core-concepts/agents.md)
-- [Tools](core-concepts/tools.md)
+// OpenAI integration
+libraryDependencies += "dev.zio" %% "zio-langchain-openai" % "0.1.0"
 
-## Components
+// Optional modules
+libraryDependencies += "dev.zio" %% "zio-langchain-chains" % "0.1.0"
+libraryDependencies += "dev.zio" %% "zio-langchain-agents" % "0.1.0"
+```
 
-- [Models](components/models/index.md)
-- [Embeddings](components/embeddings/index.md)
-- [Memory](components/memory/index.md)
-- [Document Loaders](components/document-loaders/index.md)
-- [Document Parsers](components/document-parsers/index.md)
-- [Retrievers](components/retrievers/index.md)
-- [Chains](components/chains/index.md)
-- [Agents](components/agents/index.md)
-- [Tools](components/tools/index.md)
+Then, set up your OpenAI API key:
+
+```scala
+import zio.*
+import zio.langchain.integrations.openai.*
+
+// Using environment variable
+val openAILayer = OpenAILLM.live.provide(
+  ZLayer.succeed(
+    OpenAIConfig(
+      apiKey = sys.env.getOrElse("OPENAI_API_KEY", ""),
+      model = "gpt-3.5-turbo"
+    )
+  )
+)
+```
+
+Create a simple application:
+
+```scala
+import zio.*
+import zio.langchain.core.model.LLM
+import zio.langchain.integrations.openai.*
+
+object SimpleApp extends ZIOAppDefault {
+  val program = for {
+    llm <- ZIO.service[LLM]
+    response <- llm.complete("Explain functional programming in one sentence.")
+    _ <- Console.printLine(s"Response: $response")
+  } yield ()
+  
+  override def run = program.provide(
+    OpenAILLM.live,
+    ZLayer.succeed(OpenAIConfig(
+      apiKey = sys.env.getOrElse("OPENAI_API_KEY", ""),
+      model = "gpt-3.5-turbo"
+    ))
+  )
+}
+```
+
+For more comprehensive examples, see the [Examples](examples/index.md) section.
 
 ## Examples
 
-- [Simple Chat](examples/simple-chat.md)
-- [Simple RAG](examples/simple-rag.md)
-- [Advanced Chat](examples/advanced-chat.md)
-- [Enhanced RAG](examples/enhanced-rag.md)
-- [Simple Agent](examples/simple-agent.md)
+Here are a few examples of what you can build with ZIO LangChain:
 
-## API Reference
+- Simple chat applications
+- Question answering systems with document retrieval (RAG)
+- Autonomous agents that use tools to solve tasks
+- Conversational agents with memory
+- Document processing and analysis pipelines
 
-- [API Documentation](api/index.md)
+Check out the [Examples](examples/index.md) section for complete code samples.
 
-## Design Documentation
+## Contributing
 
-- [Architecture](design/architecture.md)
-- [Implementation Strategy](design/implementation.md)
+Contributions to ZIO LangChain are welcome! Whether it's bug reports, feature requests, or code contributions, please feel free to contribute through GitHub issues and pull requests.
+
+## License
+
+ZIO LangChain is licensed under the Apache License 2.0.
