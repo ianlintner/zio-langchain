@@ -1,7 +1,6 @@
 package zio.langchain.integrations.openai
 
 import zio.*
-import java.time.Duration
 
 /**
  * Configuration for OpenAI models.
@@ -22,7 +21,7 @@ case class OpenAIConfig(
   temperature: Double = 0.7,
   maxTokens: Option[Int] = None,
   organizationId: Option[String] = None,
-  timeout: Duration = Duration.ofSeconds(60),
+  timeout: Duration = Duration.fromSeconds(60),
   enableStreaming: Boolean = true,
   logRequests: Boolean = false,
   logResponses: Boolean = false
@@ -42,7 +41,7 @@ object OpenAIConfig:
       temperature = sys.env.getOrElse("OPENAI_TEMPERATURE", "0.7").toDouble,
       maxTokens = sys.env.get("OPENAI_MAX_TOKENS").map(_.toInt),
       organizationId = sys.env.get("OPENAI_ORG_ID"),
-      timeout = Duration.ofMillis(
+      timeout = Duration.fromMillis(
         sys.env.getOrElse("OPENAI_TIMEOUT_MS", "60000").toLong
       ),
       enableStreaming = sys.env.getOrElse("OPENAI_ENABLE_STREAMING", "true").toBoolean,

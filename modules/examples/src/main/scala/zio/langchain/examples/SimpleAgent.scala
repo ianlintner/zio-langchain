@@ -3,6 +3,7 @@ package zio.langchain.examples
 import zio.*
 import zio.Console.*
 import zio.stream.ZStream
+import zio.http.{URL, URLEncoder}
 
 import zio.langchain.core.model.LLM
 import zio.langchain.core.domain.*
@@ -14,9 +15,6 @@ import zio.langchain.memory.BufferMemory
 import zio.langchain.integrations.openai.*
 
 import scala.util.Try
-import java.net.{URI, URL, URLEncoder}
-import java.io.IOException
-import scala.io.Source
 
 /**
  * A simple agent example using ZIO LangChain.
@@ -114,10 +112,14 @@ object SimpleAgent extends ZIOAppDefault:
     ) { query =>
       // This is a simplified mock search tool for demonstration
       // In a real application, you would use an actual search API
-      val sanitizedQuery = URLEncoder.encode(query.trim, "UTF-8")
+      val sanitizedQuery = for {
+        encoded <- ZIO.attempt(URLEncoder.encode(query.trim))
+                     .mapError(e => ToolExecutionError(e, s"Failed to encode query: ${e.getMessage}"))
+      } yield encoded
       
       // Simulate search results for demonstration purposes
-      ZIO.succeed {
+      sanitizedQuery.flatMap { encodedQuery =>
+        ZIO.succeed {
         s"""Search results for "$query":
            |
            |1. ZIO is a library for asynchronous and concurrent programming in Scala that focuses on type safety, composability, and performance.
@@ -129,6 +131,7 @@ object SimpleAgent extends ZIOAppDefault:
            |4. Retrieval-Augmented Generation (RAG) is a technique that enhances LLM outputs by retrieving relevant information from external knowledge sources.
            |
            |Note: This is a simulated search result for demonstration purposes.""".stripMargin
+        }
       }.catchAll { error =>
         ZIO.succeed(s"Search failed: ${error.getMessage}. Please try a different query.")
       }

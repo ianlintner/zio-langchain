@@ -105,39 +105,47 @@ class OpenAIEmbedding(config: OpenAIEmbeddingConfig) extends EmbeddingModel:
   /**
    * Makes an HTTP request to the OpenAI API using ZIO HTTP
    */
-  private def makeRequest(jsonBody: String): ZIO[Client, Throwable, String] =
-    // Prepare headers
-    val headers = Headers.empty
-      .add(Header.ContentType(MediaType.application.json))
-      .add(Header.Authorization.Bearer(config.apiKey))
-      .addOpt(Header.Custom("OpenAI-Organization", _), config.organizationId)
+  private def makeRequest(jsonBody: String): ZIO[Any, Throwable, String] = {
+  
     
-    // Build and send the request
-    for
-      // Create URL
-      url <- ZIO.fromEither(URL.decode(apiUrl))
-        .orElseFail(new RuntimeException(s"Invalid URL: $apiUrl"))
-      
-      // Create request
-      request = Request
-        .post(url)
-        .updateHeaders(_ => headers)
-        .body(Body.fromString(jsonBody))
-      
-      // Send request with timeout
-      response <- Client.request(request)
-        .timeoutFail(new RuntimeException("Request timed out"))(config.timeout)
-      
-      // Check for errors
-      _ <- ZIO.when(response.status.isError) {
-        response.body.asString.flatMap { body =>
-          ZIO.fail(new RuntimeException(s"OpenAI API error: ${response.status.code}, body: $body"))
+    // Create and send request
+    ZIO.scoped {
+      for {
+        // Get client
+        client <- ZIO.service[Client].provide(Client.default)
+        
+        // Parse URL
+        url <- ZIO.fromEither(URL.decode(apiUrl))
+                 .orElseFail(new RuntimeException(s"Invalid URL: $apiUrl"))
+        body = Body.fromString(jsonBody)
+        baseHeaders = Headers(
+          Header.ContentType(MediaType.application.json),
+          Header.Authorization.Bearer(config.apiKey)
+        )
+        headers = config.organizationId match {
+          case Some(orgId) => baseHeaders ++ Headers(Header.Custom("OpenAI-Organization", orgId))
+          case None => baseHeaders
         }
-      }
-      
-      // Get response body
-      body <- response.body.asString
-    yield body
+        // Create request
+        request = Request.post(
+          body = body,
+          url = url
+        )
+        response <- client.request(request)
+                      .timeoutFail(new RuntimeException("Request timed out"))(config.timeout)
+        
+        // Check for errors
+        _ <- ZIO.when(response.status.isError) {
+          response.body.asString.flatMap { body =>
+            ZIO.fail(new RuntimeException(s"OpenAI API error: ${response.status.code}, body: $body"))
+          }
+        }
+        
+        // Get response body
+        responseBody <- response.body.asString
+      } yield responseBody
+    }
+  }
 
   /**
    * Generates an embedding for a single text.
@@ -155,7 +163,7 @@ class OpenAIEmbedding(config: OpenAIEmbeddingConfig) extends EmbeddingModel:
     
     val result = for
       // Call OpenAI API
-      respBody <- makeRequest(jsonBody).provide(Client.default)
+      respBody <- makeRequest(jsonBody)
       
       // Parse the response
       respObj <- ZIO.fromEither(respBody.fromJson[EmbeddingResponse])
@@ -185,7 +193,7 @@ class OpenAIEmbedding(config: OpenAIEmbeddingConfig) extends EmbeddingModel:
       
       val result = for
         // Call OpenAI API
-        respBody <- makeRequest(jsonBody).provide(Client.default)
+        respBody <- makeRequest(jsonBody)
         
         // Parse the response
         respObj <- ZIO.fromEither(respBody.fromJson[EmbeddingResponse])

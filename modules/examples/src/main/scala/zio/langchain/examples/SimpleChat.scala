@@ -82,25 +82,34 @@ object SimpleChat extends ZIOAppDefault:
       input <- readLine
       
       // Check if the user wants to exit
-      _ <- if input.toLowerCase == "exit" then
+      result <- if (input.toLowerCase == "exit") then
         printLine("Goodbye!")
       else
-        // Add the user message to memory
-        _ <- memory.add(ChatMessage(role = Role.User, content = input))
-        
-        // Get all messages from memory
-        messages <- memory.get
-        
-        // Send the messages to the LLM
-        response <- llm.completeChat(messages)
-        
-        // Add the assistant's response to memory
-        _ <- memory.add(response.message)
-        
-        // Display the response
-        _ <- printLine(response.message.content)
-        _ <- printLine("")
-        
-        // Continue the chat loop
-        chatLoop(llm, memory)
-    yield ()
+        // Process the user input
+        processUserInput(input, llm, memory)
+    yield result
+  
+  /**
+   * Process user input and continue the chat loop.
+   */
+  private def processUserInput(input: String, llm: LLM, memory: Memory): ZIO[Any, Throwable, Unit] =
+    for 
+      // Add the user message to memory
+      _ <- memory.add(ChatMessage(role = Role.User, content = input))
+      
+      // Get all messages from memory
+      messages <- memory.get
+      
+      // Send the messages to the LLM
+      response <- llm.completeChat(messages)
+      
+      // Add the assistant's response to memory
+      _ <- memory.add(response.message)
+      
+      // Display the response
+      _ <- printLine(response.message.contentAsString)
+      _ <- printLine("")
+      
+      // Continue the chat loop
+      result <- chatLoop(llm, memory)
+    yield result

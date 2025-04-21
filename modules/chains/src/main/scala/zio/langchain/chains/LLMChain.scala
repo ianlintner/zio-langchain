@@ -9,6 +9,8 @@ import zio.langchain.core.memory.Memory
 import zio.langchain.core.domain.*
 import zio.langchain.core.errors.*
 
+import izumi.reflect.Tag
+
 /**
  * A Chain that uses an LLM to generate responses based on a prompt template.
  * This is one of the simplest and most commonly used chains, serving as a foundation for more complex chains.
@@ -18,7 +20,7 @@ import zio.langchain.core.errors.*
  * @param memory Optional memory to maintain conversation history
  * @param outputParser Optional function to parse the LLM output
  */
-class LLMChain[I, O] private (
+class LLMChain[I: Tag, O: Tag] private (
   promptTemplate: String,
   llm: LLM,
   memory: Option[Memory] = None,
@@ -30,33 +32,37 @@ class LLMChain[I, O] private (
    * @param input The input to the chain
    * @return A ZIO effect that produces an output O or fails with a LangChainError
    */
-  override def run(input: I): ZIO[Any, LangChainError, O] =
-    for
-      // Convert input to string representation for template substitution
-      inputStr = input.toString
-      
-      // Apply the input to the prompt template
-      filledPrompt = promptTemplate.replace("{input}", inputStr)
-      
-      // Retrieve conversation history if memory is available
-      previousMessages <- memory.map(_.get).getOrElse(ZIO.succeed(Seq.empty))
-      
+  override def run(input: I): ZIO[Any, LangChainError, O] = {
+    // Convert input to string representation for template substitution
+    val inputStr = input.toString
+    
+    // Apply the input to the prompt template
+    val filledPrompt = promptTemplate.replace("{input}", inputStr)
+    
+    // Retrieve conversation history if memory is available
+    val previousMessagesEffect = memory.map(_.get).getOrElse(ZIO.succeed(Seq.empty))
+    
+    previousMessagesEffect.flatMap { previousMessages =>
       // Create the message sequence (history + new user message)
-      messages = previousMessages :+ ChatMessage.user(filledPrompt)
+      val messages = previousMessages :+ ChatMessage.user(filledPrompt)
       
       // Get response from the LLM
-      response <- llm.completeChat(messages)
-      
-      // Store the interaction in memory if available
-      _ <- memory.map(_.add(response.message)).getOrElse(ZIO.unit)
-      
-      // Parse the output if a parser is provided
-      result = outputParser match
-        case Some(parser) => parser(response.message.contentAsString)
-        case None => 
-          // If no parser, try to cast the content to type O (will throw if incompatible)
-          response.message.contentAsString.asInstanceOf[O]
-    yield result
+      llm.completeChat(messages).flatMap { response =>
+        // Store the interaction in memory if available
+        val memoryEffect = memory.map(_.add(response.message)).getOrElse(ZIO.unit)
+        
+        memoryEffect.map { _ =>
+          // Parse the output if a parser is provided
+          outputParser match {
+            case Some(parser) => parser(response.message.contentAsString)
+            case None => 
+              // If no parser, try to cast the content to type O (will throw if incompatible)
+              response.message.contentAsString.asInstanceOf[O]
+          }
+        }
+      }
+    }
+  }
 
 /**
  * Companion object for LLMChain.
@@ -86,7 +92,7 @@ object LLMChain:
    * @param memory Optional memory to maintain conversation history
    * @return An LLMChain instance with custom typing
    */
-  def typed[I, O](
+  def typed[I: Tag, O: Tag](
     promptTemplate: String,
     llm: LLM,
     parser: String => O,
@@ -104,10 +110,9 @@ object LLMChain:
     promptTemplate: String
   ): ZLayer[LLM, Nothing, LLMChain[String, String]] =
     ZLayer {
-      for
+      for {
         llm <- ZIO.service[LLM]
-        memoryOpt = None
-      yield string(promptTemplate, llm, memoryOpt)
+      } yield string(promptTemplate, llm, None)
     }
   
   /**
@@ -117,13 +122,12 @@ object LLMChain:
    * @param parser A function to parse the LLM output to type O
    * @return A ZLayer that requires an LLM and optionally a Memory, and provides an LLMChain
    */
-  def typedLayer[I, O](
+  def typedLayer[I: Tag, O: Tag](
     promptTemplate: String,
     parser: String => O
   ): ZLayer[LLM, Nothing, LLMChain[I, O]] =
     ZLayer {
-      for
+      for {
         llm <- ZIO.service[LLM]
-        memoryOpt = None
-      yield typed[I, O](promptTemplate, llm, parser, memoryOpt)
+      } yield typed[I, O](promptTemplate, llm, parser, None)
     }

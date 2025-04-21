@@ -3,20 +3,16 @@ package zio.langchain.integrations.openai
 import zio.*
 import zio.json.*
 import zio.stream.ZStream
+import zio.http.*
 
 import zio.langchain.core.model.LLM
 import zio.langchain.core.domain.*
 import zio.langchain.core.errors.*
 import zio.langchain.core.tool.Tool
 
-import java.net.URI
-import java.net.http.{HttpClient, HttpRequest, HttpResponse}
-import java.time.{Duration => JDuration}
-import java.nio.charset.StandardCharsets
-
 /**
  * Implementation of the LLM interface for OpenAI models.
- * This version uses Java's HttpClient to connect to OpenAI API.
+ * This version uses ZIO HTTP to connect to OpenAI API.
  *
  * @param config The OpenAI configuration
  */
@@ -25,48 +21,66 @@ class OpenAILLM(config: OpenAIConfig) extends LLM:
   
   private val apiUrl = "https://api.openai.com/v1/chat/completions"
   
-  // Create a Java HTTP client for direct API calls
-  private val httpClient = HttpClient.newBuilder()
-    .version(HttpClient.Version.HTTP_2)
-    .connectTimeout(JDuration.ofMillis(config.timeout.toMillis))
-    .build()
-  
   /**
-   * Makes an HTTP request to the OpenAI API
+   * Makes an HTTP request to the OpenAI API using ZIO HTTP
    */
-  private def makeRequest(jsonBody: String): ZIO[Any, Throwable, String] = ZIO.attemptBlocking {
-    // Create request builder
-    val requestBuilder = HttpRequest.newBuilder()
-      .uri(URI.create(apiUrl))
-      .timeout(JDuration.ofMillis(config.timeout.toMillis))
-      .header("Content-Type", "application/json")
-      .header("Authorization", s"Bearer ${config.apiKey}")
-      .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+  private def makeRequest(jsonBody: String): ZIO[Any, Throwable, String] = {
+    // Create headers
+    val baseHeaders = Headers(
+      Header.ContentType(MediaType.application.json),
+      Header.Authorization.Bearer(config.apiKey)
+    )
     
     // Add organization ID if provided
-    val finalRequest = config.organizationId match
-      case Some(orgId) => requestBuilder.header("OpenAI-Organization", orgId).build()
-      case None => requestBuilder.build()
+    val headers = config.organizationId match {
+      case Some(orgId) => baseHeaders ++ Headers(Header.Custom("OpenAI-Organization", orgId))
+      case None => baseHeaders
+    }
     
     // Log request if enabled
     if (config.logRequests) {
       println(s"OpenAI API Request: $jsonBody")
     }
     
-    // Execute the request
-    val response = httpClient.send(finalRequest, HttpResponse.BodyHandlers.ofString())
+    // Create request body
+    val body = Body.fromString(jsonBody)
     
-    // Log response if enabled
-    if (config.logResponses) {
-      println(s"OpenAI API Response: ${response.body()}")
+    // Create and send request
+    ZIO.scoped {
+      for {
+        // Get client
+        client <- ZIO.service[Client].provide(Client.default)
+        
+        // Parse URL
+        url <- ZIO.fromEither(URL.decode(apiUrl))
+                 .orElseFail(new RuntimeException(s"Invalid URL: $apiUrl"))
+        
+        // Create request
+        request = Request.post(
+          body = body,
+          url = url
+        )
+        
+        // Send request
+        response <- client.request(request)
+                      .timeoutFail(new RuntimeException("Request timed out"))(config.timeout)
+        
+        // Check for errors
+        _ <- ZIO.when(response.status.isError) {
+          response.body.asString.flatMap { body =>
+            ZIO.fail(new RuntimeException(s"OpenAI API error: ${response.status.code}, body: $body"))
+          }
+        }
+        
+        // Get response body
+        responseBody <- response.body.asString
+        
+        // Log response if enabled
+        _ <- ZIO.when(config.logResponses) {
+          ZIO.succeed(println(s"OpenAI API Response: $responseBody"))
+        }
+      } yield responseBody
     }
-    
-    // Check for errors
-    if (response.statusCode() >= 400) {
-      throw new RuntimeException(s"OpenAI API error: ${response.statusCode()}, body: ${response.body()}")
-    }
-    
-    response.body()
   }
   
   /**

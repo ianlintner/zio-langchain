@@ -1,6 +1,6 @@
 # ZIO LangChain
 
-A comprehensive Scala 3 library that provides a ZIO-based wrapper around langchain4j, offering a purely functional, type-safe API for building LLM-powered applications.
+A comprehensive Scala 3 library that provides a ZIO-based langchain, offering a purely functional effect based, type-safe API for building LLM-powered applications.
 
 ## Features
 

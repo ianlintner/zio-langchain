@@ -10,7 +10,7 @@ import zio.langchain.core.domain.*
 import zio.langchain.core.chain.*
 import zio.langchain.integrations.openai.*
 
-import java.nio.file.{Path, Paths}
+import zio.nio.file.{Path}
 
 /**
  * A simple Retrieval-Augmented Generation (RAG) example using ZIO LangChain.
@@ -29,25 +29,25 @@ object SimpleRAG extends ZIOAppDefault:
     // Create the program
     val program = for
       // Print welcome message
-      _ <- printLine("Welcome to ZIO LangChain RAG Example!")
-      _ <- printLine("Loading documents and creating embeddings...")
+      _ <- ZIO.logInfo("Welcome to ZIO LangChain RAG Example!")
+      _ <- ZIO.logInfo("Loading documents and creating embeddings...")
       
       // Get the services
       llm <- ZIO.service[LLM]
       embeddingModel <- ZIO.service[EmbeddingModel]
       
       // Load and process documents
-      documents <- loadDocuments(Paths.get("docs"))
-      _ <- printLine(s"Loaded ${documents.size} documents")
+      documents <- loadDocuments(Path("docs"))
+      _ <- ZIO.logInfo(s"Loaded ${documents.size} documents")
       
       // Split documents into chunks
       documentParser = DocumentParsers.byCharacterCount(chunkSize = 1000, chunkOverlap = 200)
       chunks <- documentParser.parseAll(documents)
-      _ <- printLine(s"Split into ${chunks.size} chunks")
+      _ <- ZIO.logInfo(s"Split into ${chunks.size} chunks")
       
       // Create embeddings for the chunks
       embeddedChunks <- embeddingModel.embedDocuments(chunks)
-      _ <- printLine("Created embeddings for all chunks")
+      _ <- ZIO.logInfo("Created embeddings for all chunks")
       
       // Create an in-memory retriever
       retriever = new InMemoryRetriever(embeddedChunks)
@@ -182,22 +182,24 @@ object SimpleRAG extends ZIOAppDefault:
   private def qaLoop(ragChain: Chain[Any, Throwable, String, String]): ZIO[Any, Throwable, Unit] =
     for
       // Prompt the user for a question
-      _ <- printLine("\nEnter your question (or 'exit' to quit):")
-      _ <- printLine("> ", noNewLine = true)
+      _ <- ZIO.logInfo("\nEnter your question (or 'exit' to quit):")
+      _ <- ZIO.logInfo("> ")
       question <- readLine
       
       // Check if the user wants to exit
-      _ <- if question.toLowerCase == "exit" then
-        printLine("Goodbye!")
+      result <- if question.toLowerCase == "exit" then
+        ZIO.logInfo("Goodbye!").as(())
       else
-        // Process the question and get the answer
-        _ <- printLine("Thinking...")
-        answer <- ragChain.run(question)
-        
-        // Display the answer
-        _ <- printLine("\nAnswer:")
-        _ <- printLine(answer)
-        
-        // Continue the loop
-        qaLoop(ragChain)
-    yield ()
+        for
+          // Process the question and get the answer
+          _ <- ZIO.logInfo("Thinking...")
+          answer <- ragChain.run(question)
+          
+          // Display the answer
+          _ <- ZIO.logInfo("\nAnswer:")
+          _ <- ZIO.logInfo(answer)
+          
+          // Continue the loop
+          result <- qaLoop(ragChain)
+        yield result
+    yield result
