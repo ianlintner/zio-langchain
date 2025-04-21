@@ -69,6 +69,8 @@ lazy val root = project
     chains,
     agents,
     tools,
+    rag,
+    evaluation,
     integrationOpenAI,
     integrationAnthropic,
     integrationPinecone,
@@ -141,6 +143,14 @@ lazy val retrievers = project
     libraryDependencies ++= commonDependencies
   )
 
+lazy val rag = project
+  .in(file("modules/rag"))
+  .dependsOn(core, models, retrievers)
+  .settings(
+    name := "zio-langchain-rag",
+    libraryDependencies ++= commonDependencies
+  )
+
 lazy val chains = project
   .in(file("modules/chains"))
   .dependsOn(core, models, retrievers)
@@ -197,6 +207,14 @@ lazy val integrationPinecone = project
     libraryDependencies ++= commonDependencies
   )
 
+lazy val evaluation = project
+  .in(file("modules/evaluation"))
+  .dependsOn(core, models, retrievers, chains)
+  .settings(
+    name := "zio-langchain-evaluation",
+    libraryDependencies ++= commonDependencies
+  )
+
 // Commented out as langchain4j-huggingface dependency may not be compatible with chosen version
 // lazy val integrationHuggingFace = project
 //   .in(file("modules/integrations/huggingface"))
@@ -222,8 +240,10 @@ lazy val examples = project
     documentProcessors,
     parsers,
     retrievers,
+    rag,
     memory,
-    tools
+    tools,
+    evaluation
   )
   .settings(
     name := "zio-langchain-examples",

@@ -5,6 +5,18 @@ import zio.json.*
 import zio.langchain.core.errors.OutputParsingError
 import zio.langchain.core.model.LLM
 
+// Define JsonOptions type for JSON parsing configuration
+case class JsonOptions(
+  ignoreUnknownKeys: Boolean = false,
+  strictDecoding: Boolean = true
+)
+
+// Define JsonAny type for representing any JSON value
+type JsonAny = Map[String, Any]
+
+// Provide a JsonDecoder for JsonAny
+implicit val jsonAnyDecoder: JsonDecoder[JsonAny] = JsonDecoder.map[String, String].map(_.map { case (k, v) => (k, v.asInstanceOf[Any]) })
+
 /**
  * A specialized output parser that uses JSON schema for validation and parsing.
  * This parser provides more advanced schema validation and error handling for JSON outputs.
@@ -37,7 +49,10 @@ class JsonSchemaOutputParser[T: JsonDecoder: JsonEncoder] private (
       // Parse the JSON and validate against the schema
       ZIO.fromEither(
         options match
-          case Some(opts) => cleanedJson.fromJson[T](opts)
+          case Some(opts) =>
+            // Use the JsonDecoder directly since we can't pass our custom JsonOptions to fromJson
+            val decoder = implicitly[JsonDecoder[T]]
+            decoder.decodeJson(cleanedJson)
           case None => cleanedJson.fromJson[T]
       ).mapError { error =>
         OutputParsingError(
@@ -49,11 +64,7 @@ class JsonSchemaOutputParser[T: JsonDecoder: JsonEncoder] private (
     }.flatMap { parsed =>
       // Validate the parsed object against the schema
       validateAgainstSchema(parsed).mapError { error =>
-        OutputParsingError(
-          error,
-          "JSON schema validation failed",
-          Some(text)
-        )
+        error.copy(output = Some(text))
       }
     }
 
@@ -63,16 +74,20 @@ class JsonSchemaOutputParser[T: JsonDecoder: JsonEncoder] private (
    * @param parsed The parsed object
    * @return A ZIO effect that produces the validated object or fails with a Throwable
    */
-  private def validateAgainstSchema(parsed: T): ZIO[Any, Throwable, T] =
-    ZIO.attempt {
+  private def validateAgainstSchema(parsed: T): ZIO[Any, OutputParsingError, T] =
+    ZIO.fromEither {
       // Convert the parsed object to JSON
       val jsonString = parsed.toJson
       
       // Validate against the schema
       schema.validate(jsonString) match
         case Left(errors) =>
-          throw new RuntimeException(s"Schema validation errors: ${errors.mkString(", ")}")
-        case Right(_) => parsed
+          Left(OutputParsingError(
+            new RuntimeException(s"Schema validation errors: ${errors.mkString(", ")}"),
+            "JSON schema validation failed",
+            None
+          ))
+        case Right(_) => Right(parsed)
     }
 
   /**
@@ -118,7 +133,7 @@ object JsonSchemaOutputParser:
    * @param formatInstructions Optional custom format instructions
    * @return A new JsonSchemaOutputParser
    */
-  def fromType[T: JsonDecoder: JsonEncoder](
+  def fromType[T: JsonDecoder: JsonEncoder: scala.reflect.ClassTag](
     options: Option[JsonOptions] = None,
     formatInstructions: Option[String] = None
   ): JsonSchemaOutputParser[T] =
@@ -154,16 +169,23 @@ object JsonSchema:
    * @tparam T The type to create a schema for
    * @return A new JsonSchema
    */
-  def fromType[T: JsonEncoder]: JsonSchema =
+  def fromType[T: JsonEncoder: JsonDecoder: scala.reflect.ClassTag]: JsonSchema =
     val encoder = implicitly[JsonEncoder[T]]
-    val schemaStr = encoder.schema.toString
+    // Generate a simple schema description instead of using encoder.schema
+    val schemaStr = s"""
+      |{
+      |  "type": "object",
+      |  "description": "Schema for ${scala.reflect.classTag[T].runtimeClass.getSimpleName}"
+      |}
+      |""".stripMargin
     
     new JsonSchema:
       override def validate(json: String): Either[List[String], String] =
         // Basic validation - just check if it can be parsed as the target type
         // In a real implementation, this would use a proper JSON schema validator
-        json.fromJson[T] match
-          case Left(error) => Left(List(error))
+        val decoder = implicitly[JsonDecoder[T]]
+        decoder.decodeJson(json) match
+          case Left(e) => Left(List(e))
           case Right(_) => Right(json)
       
       override def toString: String = schemaStr
@@ -180,7 +202,7 @@ object JsonSchema:
         // In a real implementation, this would use a proper JSON schema validator
         // For now, we just do basic JSON parsing validation
         json.fromJson[JsonAny] match
-          case Left(error) => Left(List(error))
+          case Left(err) => Left(List(err))
           case Right(_) => Right(json)
       
       override def toString: String = schemaStr

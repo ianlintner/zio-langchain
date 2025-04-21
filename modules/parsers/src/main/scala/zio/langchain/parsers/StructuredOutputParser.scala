@@ -113,9 +113,13 @@ object StructuredOutputParser:
    */
   def apply[T](
     parser: OutputParser[T],
-    promptTemplate: String => String = defaultPromptTemplate(_)
+    promptTemplate: String => String = null
   ): StructuredOutputParser[T] =
-    new StructuredOutputParser[T](parser, promptTemplate)
+    val actualTemplate = if (promptTemplate == null)
+      (prompt: String) => defaultPromptTemplate(prompt, parser)
+    else
+      promptTemplate
+    new StructuredOutputParser[T](parser, actualTemplate)
 
   /**
    * Creates a new StructuredOutputParser for JSON outputs.
@@ -123,11 +127,15 @@ object StructuredOutputParser:
    * @param promptTemplate A function that formats the user prompt with format instructions
    * @return A new StructuredOutputParser for the specified type
    */
-  def forJson[T: JsonDecoder](
-    promptTemplate: String => String = defaultPromptTemplate(_)
+  def forJson[T: JsonDecoder: JsonEncoder: scala.reflect.ClassTag](
+    promptTemplate: String => String = null
   ): StructuredOutputParser[T] =
     val parser = OutputParser.json[T]()
-    new StructuredOutputParser[T](parser, promptTemplate)
+    val actualTemplate = if (promptTemplate == null)
+      (prompt: String) => defaultPromptTemplate(prompt, parser)
+    else
+      promptTemplate
+    new StructuredOutputParser[T](parser, actualTemplate)
 
   /**
    * Creates a new StructuredOutputParser with JSON schema validation.
@@ -136,21 +144,25 @@ object StructuredOutputParser:
    * @param promptTemplate A function that formats the user prompt with format instructions
    * @return A new StructuredOutputParser for the specified type
    */
-  def withJsonSchema[T: JsonDecoder: JsonEncoder](
+  def withJsonSchema[T: JsonDecoder: JsonEncoder: scala.reflect.ClassTag](
     schema: JsonSchema,
-    promptTemplate: String => String = defaultPromptTemplate(_)
+    promptTemplate: String => String = null
   ): StructuredOutputParser[T] =
     val parser = JsonSchemaOutputParser[T](schema)
-    new StructuredOutputParser[T](parser, promptTemplate)
+    val actualTemplate = if (promptTemplate == null)
+      (prompt: String) => defaultPromptTemplate(prompt, parser)
+    else
+      promptTemplate
+    new StructuredOutputParser[T](parser, actualTemplate)
 
   /**
    * Default prompt template that adds format instructions to the user prompt.
    *
    * @param prompt The user prompt
-   * @param formatInstructions The format instructions
+   * @param parser The output parser to get format instructions from
    * @return The formatted prompt
    */
-  private def defaultPromptTemplate(prompt: String)(using parser: OutputParser[?]): String =
+  private def defaultPromptTemplate(prompt: String, parser: OutputParser[?]): String =
     s"""$prompt
        |
        |You must respond in the following format:

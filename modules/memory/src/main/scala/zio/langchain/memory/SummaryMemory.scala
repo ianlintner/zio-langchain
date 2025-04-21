@@ -82,16 +82,16 @@ class SummaryMemory private (
    * @param messagesToSummarize The messages to summarize
    * @return A ZIO effect that completes with unit or fails with a MemoryError
    */
-  private def summarizeMessages(messagesToSummarize: Vector[ChatMessage]): ZIO[Any, MemoryError, Unit] =
+  private def summarizeMessages(messagesToSummarize: Vector[ChatMessage]): ZIO[Any, MemoryError, Unit] = {
+    // Format messages for the summarization prompt
+    val formattedMessages = messagesToSummarize.map { msg =>
+      s"${msg.role}: ${msg.contentAsString}"
+    }.mkString("\n")
+    
+    // Replace placeholder in the prompt template
+    val prompt = summarizationPrompt.replace("{messages}", formattedMessages)
+    
     for {
-      // Format messages for the summarization prompt
-      formattedMessages <- ZIO.succeed(messagesToSummarize.map { msg =>
-        s"${msg.role}: ${msg.contentAsString}"
-      }.mkString("\n"))
-      
-      // Replace placeholder in the prompt template
-      prompt = summarizationPrompt.replace("{messages}", formattedMessages)
-      
       // Generate summary using the LLM
       summaryText <- llm.complete(prompt)
         .mapError(err => MemoryError(err, "Failed to generate conversation summary"))
@@ -102,6 +102,7 @@ class SummaryMemory private (
       // Clear the message buffer, keeping only the most recent message
       _ <- messages.update(_.takeRight(1))
     } yield ()
+  }
 
 /**
  * Companion object for SummaryMemory.

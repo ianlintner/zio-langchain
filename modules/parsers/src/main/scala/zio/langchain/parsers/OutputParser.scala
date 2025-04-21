@@ -107,7 +107,7 @@ object OutputParser:
    * @param jsonOptions Optional JSON options for customizing parsing behavior
    * @return A new OutputParser that parses JSON into the specified type
    */
-  def json[T: JsonDecoder](
+  def json[T: JsonDecoder: JsonEncoder: scala.reflect.ClassTag](
     formatInstructions: String = "JSON",
     jsonOptions: Option[JsonOptions] = None
   ): OutputParser[T] =
@@ -115,7 +115,10 @@ object OutputParser:
       override def parse(text: String): ZIO[Any, OutputParsingError, T] =
         ZIO.fromEither(
           jsonOptions match
-            case Some(options) => text.fromJson[T](options)
+            case Some(options) =>
+              // Use the JsonDecoder directly since we can't pass our custom JsonOptions to fromJson
+              val decoder = implicitly[JsonDecoder[T]]
+              decoder.decodeJson(text)
             case None => text.fromJson[T]
         ).mapError(e => OutputParsingError(
           new RuntimeException(e),
@@ -124,7 +127,7 @@ object OutputParser:
         ))
 
       override def getFormatInstructions: String =
-        s"JSON with the following structure: ${JsonEncoder[T].schema.toString}"
+        s"JSON with the following structure: ${scala.reflect.classTag[T].runtimeClass.getSimpleName}"
 
   /**
    * Creates an output parser that extracts structured data based on a regex pattern.
