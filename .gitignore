@@ -1,0 +1,47 @@
+# SBT
+target/
+project/target/
+project/project/
+.bsp/
+
+# Scala
+*.class
+*.log
+.metals/
+.bloop/
+.scala-build/
+metals.sbt
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# VS Code
+.vscode/
+.history/
+
+# Mac
+.DS_Store
+
+# Environment variables
+.env
+
+# Temporary files
+tmp/
+temp/
+
+# Logs
+logs/
+*.log
+
+# Dependency directories
+lib_managed/
+src_managed/
+project/boot/
+project/plugins/project/
+
+# Scala-CLI
+.scala-build/
