@@ -21,7 +21,8 @@ case class PineconeConfig(
   indexName: String,
   namespace: Option[String] = None,
   dimension: Int = 1536,
-  timeout: Duration = Duration.fromSeconds(60)
+  timeout: Duration = Duration.fromSeconds(60),
+  override val model: String = "text-embedding-ada-002"
 ) extends EmbeddingConfig
 
 /**

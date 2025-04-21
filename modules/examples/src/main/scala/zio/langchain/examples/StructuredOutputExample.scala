@@ -7,225 +7,109 @@ import zio.Console.*
 import zio.langchain.core.model.LLM
 import zio.langchain.core.domain.ChatMessage
 import zio.langchain.integrations.openai.{OpenAIConfig, OpenAILLM}
-import zio.langchain.parsers.{OutputParser, JsonSchemaOutputParser, StructuredOutputParser, JsonSchema}
 
 /**
- * Example demonstrating the use of structured output parsing with LLMs.
+ * Example demonstrating how to work with structured outputs in ZIO LangChain.
  * This example shows how to:
- * 1. Parse LLM outputs into strongly typed Scala objects
- * 2. Use JSON schema-based output parsing
- * 3. Handle parsing failures with retry mechanisms
+ * 1. Define a case class for structured data
+ * 2. Create a prompt that asks for structured data
+ * 3. Parse the response into the structured data type
  */
 object StructuredOutputExample extends ZIOAppDefault:
-
-  // Define a case class for structured output
+  /**
+   * Case class representing a movie review.
+   */
   case class MovieReview(
     title: String,
     year: Int,
     rating: Double,
-    review: String,
-    pros: List[String],
-    cons: List[String]
+    review: String
   )
 
-  // JSON encoder/decoder for MovieReview
-  implicit val movieReviewEncoder: JsonEncoder[MovieReview] = DeriveJsonEncoder.gen[MovieReview]
-  implicit val movieReviewDecoder: JsonDecoder[MovieReview] = DeriveJsonDecoder.gen[MovieReview]
+  /**
+   * JSON encoder/decoder for MovieReview.
+   */
+  given JsonEncoder[MovieReview] = DeriveJsonEncoder.gen[MovieReview]
+  given JsonDecoder[MovieReview] = DeriveJsonDecoder.gen[MovieReview]
 
-  // Example 1: Basic JSON parsing
-  def basicJsonParsingExample(llm: LLM): ZIO[Any, Throwable, Unit] =
-    // Create a JSON parser for MovieReview
-    val parser = OutputParser.json[MovieReview]()
+  /**
+   * Simple example of getting a structured response from the LLM.
+   */
+  def simpleExample(llm: LLM): ZIO[Any, Throwable, Unit] = {
+    // Define the prompt
+    val prompt = 
+      "Generate a movie review in JSON format. The review should include:\n" +
+      "1. title: The title of the movie\n" +
+      "2. year: The year the movie was released (as a number)\n" +
+      "3. rating: A rating from 0.0 to 10.0 (as a number)\n" +
+      "4. review: A short review of the movie\n\n" +
+      "Format the response as valid JSON that matches this structure:\n" +
+      "{\n" +
+      "  \"title\": \"Movie Title\",\n" +
+      "  \"year\": 2023,\n" +
+      "  \"rating\": 8.5,\n" +
+      "  \"review\": \"This is a review of the movie.\"\n" +
+      "}"
     
-    // Prompt for the LLM
-    val prompt = """
-      |Write a detailed review of the movie "The Matrix" (1999).
-      |Include the title, year, your rating out of 10, a review, and lists of pros and cons.
-      |""".stripMargin
-    
-    // Use the StructuredOutputParser to generate and parse the output
-    val structuredParser = StructuredOutputParser.forJson[MovieReview]()
-    
-    for
-      _ <- printLine("Example 1: Basic JSON Parsing")
-      _ <- printLine("Generating structured movie review...")
-      review <- structuredParser.generateStructured(prompt, llm)
-      _ <- printLine(s"Parsed review: ${review.toJson}")
-      _ <- printLine(s"Movie: ${review.title} (${review.year})")
-      _ <- printLine(s"Rating: ${review.rating}/10")
+    for {
+      // Get the response from the LLM
+      response <- llm.complete(prompt)
+      _ <- printLine(s"LLM Response:\n$response\n")
+      
+      // Extract the JSON part from the response
+      jsonStr = extractJson(response)
+      _ <- printLine(s"Extracted JSON:\n$jsonStr\n")
+      
+      // Parse the JSON into a MovieReview
+      review <- ZIO.fromEither(jsonStr.fromJson[MovieReview])
+        .mapError(err => new RuntimeException(s"Failed to parse JSON: $err"))
+      
+      // Print the structured data
+      _ <- printLine("Parsed Movie Review:")
+      _ <- printLine(s"Title: ${review.title}")
+      _ <- printLine(s"Year: ${review.year}")
+      _ <- printLine(s"Rating: ${review.rating}")
       _ <- printLine(s"Review: ${review.review}")
-      _ <- printLine("Pros:")
-      _ <- ZIO.foreach(review.pros)(pro => printLine(s"- $pro"))
-      _ <- printLine("Cons:")
-      _ <- ZIO.foreach(review.cons)(con => printLine(s"- $con"))
-      _ <- printLine("")
-    yield ()
+    } yield ()
+  }
 
-  // Example 2: Using the LLM extension methods
-  def llmExtensionExample(llm: LLM): ZIO[Any, Throwable, Unit] =
-    // Create a JSON parser for MovieReview
-    val parser = OutputParser.json[MovieReview]()
-    
-    // Prompt for the LLM
-    val prompt = """
-      |Write a detailed review of the movie "Inception" (2010).
-      |Include the title, year, your rating out of 10, a review, and lists of pros and cons.
-      |""".stripMargin
-    
-    for
-      _ <- printLine("Example 2: Using LLM Extension Methods")
-      _ <- printLine("Generating structured movie review...")
-      review <- llm.completeStructured(prompt, parser)
-      _ <- printLine(s"Parsed review: ${review.toJson}")
-      _ <- printLine(s"Movie: ${review.title} (${review.year})")
-      _ <- printLine(s"Rating: ${review.rating}/10")
-      _ <- printLine(s"Review: ${review.review}")
-      _ <- printLine("Pros:")
-      _ <- ZIO.foreach(review.pros)(pro => printLine(s"- $pro"))
-      _ <- printLine("Cons:")
-      _ <- ZIO.foreach(review.cons)(con => printLine(s"- $con"))
-      _ <- printLine("")
-    yield ()
-
-  // Example 3: Chat-based structured output
-  def chatBasedExample(llm: LLM): ZIO[Any, Throwable, Unit] =
-    // Create a JSON parser for MovieReview
-    val parser = OutputParser.json[MovieReview]()
-    
-    // Chat messages
-    val messages = Seq(
-      ChatMessage.system("You are a helpful movie critic assistant."),
-      ChatMessage.user("Can you review the movie 'Interstellar' (2014)?")
-    )
-    
-    for
-      _ <- printLine("Example 3: Chat-Based Structured Output")
-      _ <- printLine("Generating structured movie review from chat...")
-      review <- llm.completeChatStructured(messages, parser)
-      _ <- printLine(s"Parsed review: ${review.toJson}")
-      _ <- printLine(s"Movie: ${review.title} (${review.year})")
-      _ <- printLine(s"Rating: ${review.rating}/10")
-      _ <- printLine(s"Review: ${review.review}")
-      _ <- printLine("Pros:")
-      _ <- ZIO.foreach(review.pros)(pro => printLine(s"- $pro"))
-      _ <- printLine("Cons:")
-      _ <- ZIO.foreach(review.cons)(con => printLine(s"- $con"))
-      _ <- printLine("")
-    yield ()
-
-  // Example 4: Using JSON schema validation
-  def jsonSchemaExample(llm: LLM): ZIO[Any, Throwable, Unit] =
-    // Create a JSON schema for MovieReview
-    val schema = JsonSchema.fromType[MovieReview]
-    
-    // Create a structured parser with schema validation
-    val structuredParser = StructuredOutputParser.withJsonSchema[MovieReview](schema)
-    
-    // Prompt for the LLM
-    val prompt = """
-      |Write a detailed review of the movie "The Shawshank Redemption" (1994).
-      |Include the title, year, your rating out of 10, a review, and lists of pros and cons.
-      |""".stripMargin
-    
-    for
-      _ <- printLine("Example 4: JSON Schema Validation")
-      _ <- printLine("Generating structured movie review with schema validation...")
-      review <- structuredParser.generateStructured(prompt, llm)
-      _ <- printLine(s"Parsed review: ${review.toJson}")
-      _ <- printLine(s"Movie: ${review.title} (${review.year})")
-      _ <- printLine(s"Rating: ${review.rating}/10")
-      _ <- printLine(s"Review: ${review.review}")
-      _ <- printLine("Pros:")
-      _ <- ZIO.foreach(review.pros)(pro => printLine(s"- $pro"))
-      _ <- printLine("Cons:")
-      _ <- ZIO.foreach(review.cons)(con => printLine(s"- $con"))
-      _ <- printLine("")
-    yield ()
-
-  // Example 5: Handling parsing failures with retry
-  def retryExample(llm: LLM): ZIO[Any, Throwable, Unit] =
-    // Create a JSON parser for a more complex structure
-    case class ComplexReview(
-      title: String,
-      year: Int,
-      director: String,
-      cast: List[String],
-      rating: Double,
-      categories: List[String],
-      review: String,
-      analysis: Map[String, String]
-    )
-    
-    implicit val complexReviewEncoder: JsonEncoder[ComplexReview] = DeriveJsonEncoder.gen[ComplexReview]
-    implicit val complexReviewDecoder: JsonDecoder[ComplexReview] = DeriveJsonDecoder.gen[ComplexReview]
-    
-    val parser = OutputParser.json[ComplexReview]()
-    
-    // Prompt for the LLM
-    val prompt = """
-      |Write a detailed review of the movie "Pulp Fiction" (1994).
-      |Include the title, year, director, main cast members, your rating out of 10,
-      |categories (genres), a review, and an analysis with sections for cinematography,
-      |screenplay, acting, and soundtrack.
-      |""".stripMargin
-    
-    for
-      _ <- printLine("Example 5: Retry Mechanism")
-      _ <- printLine("Generating complex structured review with retry capability...")
-      review <- parser.parseWithRetry(
-        // Intentionally malformed JSON to trigger retry
-        """
-        |{
-        |  "title": "Pulp Fiction",
-        |  "year": 1994,
-        |  "director": "Quentin Tarantino",
-        |  "cast": ["John Travolta", "Samuel L. Jackson", "Uma Thurman"],
-        |  "rating": 9.5,
-        |  "categories": ["Crime", "Drama"],
-        |  "review": "A groundbreaking film that redefined cinema in the 90s."
-        |  // Missing the analysis field and has a syntax error (comment)
-        |}
-        |""".stripMargin,
-        llm,
-        maxRetries = 2
-      ).catchAll { error =>
-        printLine(s"Error: ${error.getMessage}") *>
-        ZIO.succeed(ComplexReview(
-          "Pulp Fiction", 1994, "Quentin Tarantino",
-          List("John Travolta", "Samuel L. Jackson", "Uma Thurman"),
-          9.5, List("Crime", "Drama"),
-          "A groundbreaking film that redefined cinema in the 90s.",
-          Map("note" -> "This is a fallback after parsing failure")
-        ))
-      }
-      _ <- printLine(s"Parsed review: ${review.toJson}")
-      _ <- printLine(s"Movie: ${review.title} (${review.year})")
-      _ <- printLine(s"Director: ${review.director}")
-      _ <- printLine(s"Cast: ${review.cast.mkString(", ")}")
-      _ <- printLine(s"Rating: ${review.rating}/10")
-      _ <- printLine(s"Categories: ${review.categories.mkString(", ")}")
-      _ <- printLine(s"Review: ${review.review}")
-      _ <- printLine("Analysis:")
-      _ <- ZIO.foreach(review.analysis.toList) { case (key, value) =>
-        printLine(s"- $key: $value")
-      }
-    yield ()
+  /**
+   * Helper function to extract JSON from a string.
+   * This handles cases where the LLM might include additional text before or after the JSON.
+   */
+  def extractJson(text: String): String = {
+    val jsonPattern = """\{[\s\S]*\}""".r
+    jsonPattern.findFirstIn(text).getOrElse("{}")
+  }
 
   // Main program
-  override def run: ZIO[Any, Throwable, Unit] =
-    // Create an OpenAI LLM
-    val llm = for
-      config <- ZIO.config(OpenAIConfig.config)
-      llm <- OpenAILLM.createDefault(config)
-    yield llm
+  override def run: ZIO[Any, Throwable, Unit] = {
+    // Create the program
+    val program = for {
+      // Print welcome message
+      _ <- printLine("Welcome to ZIO LangChain Structured Output Example!")
+      _ <- printLine("")
+      
+      // Get the LLM service
+      llm <- ZIO.service[LLM]
+      
+      // Run the examples
+      _ <- printLine("Running simple example...")
+      _ <- simpleExample(llm)
+    } yield ()
     
-    // Run all examples
-    llm.flatMap { llmInstance =>
-      for
-        _ <- basicJsonParsingExample(llmInstance)
-        _ <- llmExtensionExample(llmInstance)
-        _ <- chatBasedExample(llmInstance)
-        _ <- jsonSchemaExample(llmInstance)
-        _ <- retryExample(llmInstance)
-      yield ()
-    }
+    // Provide the required services and run the program
+    program.provide(
+      // OpenAI LLM layer
+      OpenAILLM.live,
+      // OpenAI configuration layer
+      ZLayer.succeed(
+        OpenAIConfig(
+          apiKey = sys.env.getOrElse("OPENAI_API_KEY", ""),
+          model = sys.env.getOrElse("OPENAI_MODEL", "gpt-3.5-turbo"),
+          temperature = 0.7,
+          maxTokens = Some(2000)
+        )
+      )
+    )
+  }

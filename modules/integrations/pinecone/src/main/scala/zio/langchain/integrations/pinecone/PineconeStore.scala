@@ -71,7 +71,7 @@ class PineconeStore private (
           case Method.POST => Request.post(body, url).updateHeaders(_ ++ headers)
           case Method.PUT => Request.put(body, url).updateHeaders(_ ++ headers)
           case Method.DELETE => Request.delete(url).updateHeaders(_ ++ headers)
-          case _ => Request(method, body, url, headers = headers)
+          case _ => Request.apply(body, Headers.empty, method, url, Version.Http_1_1, None).updateHeaders(_ => headers)
         }
         
         // Send request

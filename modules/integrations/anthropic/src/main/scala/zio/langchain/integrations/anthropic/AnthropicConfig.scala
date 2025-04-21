@@ -1,9 +1,6 @@
 package zio.langchain.integrations.anthropic
 
 import zio.*
-import zio.config.*
-import zio.config.magnolia.*
-import zio.config.typesafe.*
 import zio.langchain.core.config.ModelConfig
 
 import java.time.Duration as JDuration
@@ -36,29 +33,26 @@ case class AnthropicConfig(
  */
 object AnthropicConfig:
   /**
-   * Configuration descriptor for AnthropicConfig.
+   * Creates an AnthropicConfig from environment variables.
    */
-  val config: ConfigDescriptor[AnthropicConfig] = descriptor[AnthropicConfig].mapKey(toKebabCase)
-  
-  /**
-   * Creates a ZLayer that provides an AnthropicConfig from the default configuration source.
-   * Looks for configuration under the "anthropic" path.
-   */
-  val layer: ZLayer[Any, Config.Error, AnthropicConfig] =
-    ZLayer {
-      for {
-        source <- TypesafeConfigSource.fromResourcePath
-                    .orElse(TypesafeConfigSource.fromDefaultLoader)
-        config <- ZIO.config(nested("anthropic")(config)).provide(
-                    ConfigProvider.fromConfigSource(source)
-                  )
-      } yield config
-    }
+  private def createFromEnv: AnthropicConfig =
+    AnthropicConfig(
+      apiKey = sys.env.getOrElse("ANTHROPIC_API_KEY", ""),
+      model = sys.env.getOrElse("ANTHROPIC_MODEL", "claude-3-sonnet-20240229"),
+      temperature = sys.env.getOrElse("ANTHROPIC_TEMPERATURE", "0.7").toDouble,
+      maxTokens = sys.env.get("ANTHROPIC_MAX_TOKENS").map(_.toInt),
+      timeout = Duration.fromMillis(
+        sys.env.getOrElse("ANTHROPIC_TIMEOUT_MS", "60000").toLong
+      ),
+      enableStreaming = sys.env.getOrElse("ANTHROPIC_ENABLE_STREAMING", "true").toBoolean,
+      logRequests = sys.env.getOrElse("ANTHROPIC_LOG_REQUESTS", "false").toBoolean,
+      logResponses = sys.env.getOrElse("ANTHROPIC_LOG_RESPONSES", "false").toBoolean
+    )
   
   /**
    * Creates a ZLayer that provides an AnthropicConfig from environment variables.
-   * This is provided for backward compatibility.
    */
+  val layer: ULayer[AnthropicConfig] = ZLayer.succeed(createFromEnv)
   val fromEnv: ULayer[AnthropicConfig] = 
     ZLayer.succeed(
       AnthropicConfig(

@@ -59,7 +59,7 @@ object QueryTransformer:
   def compose(transformers: QueryTransformer*): QueryTransformer = new QueryTransformer:
     override def transform(query: String): ZIO[Any, QueryTransformationError, String] =
       transformers.foldLeft(ZIO.succeed(query)) { (queryEffect, transformer) =>
-        queryEffect.flatMap(transformer.transform)
+        queryEffect.flatMap(q => transformer.transform(q).orDie)
       }
 
   /**
