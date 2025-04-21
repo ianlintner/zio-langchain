@@ -111,3 +111,21 @@ object errors:
   ) extends LangChainError:
     override def getMessage: String = s"$message: ${cause.getMessage}"
     override def getCause: Throwable = cause
+    
+  /**
+   * Error that occurs during output parsing operations.
+   *
+   * @param cause The underlying cause of the error
+   * @param message A descriptive error message
+   * @param output The original output that failed to parse
+   */
+  case class OutputParsingError(
+    cause: Throwable,
+    message: String = "Output parsing error occurred",
+    output: Option[String] = None
+  ) extends LangChainError:
+    override def getMessage: String =
+      output match
+        case Some(text) => s"$message: ${cause.getMessage}\nOriginal output: $text"
+        case None => s"$message: ${cause.getMessage}"
+    override def getCause: Throwable = cause

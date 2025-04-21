@@ -63,12 +63,15 @@ lazy val root = project
     memory,
     documentLoaders,
     documentParsers,
+    documentProcessors,
+    parsers,
     retrievers,
     chains,
     agents,
     tools,
     integrationOpenAI,
-    // integrationAnthropic is currently disabled
+    integrationAnthropic,
+    integrationPinecone,
     examples
   )
 
@@ -122,6 +125,14 @@ lazy val documentParsers = project
     libraryDependencies ++= commonDependencies
   )
 
+lazy val documentProcessors = project
+  .in(file("modules/document-processors"))
+  .dependsOn(core)
+  .settings(
+    name := "zio-langchain-document-processors",
+    libraryDependencies ++= commonDependencies
+  )
+
 lazy val retrievers = project
   .in(file("modules/retrievers"))
   .dependsOn(core, embeddings)
@@ -154,6 +165,14 @@ lazy val tools = project
     libraryDependencies ++= commonDependencies
   )
 
+lazy val parsers = project
+  .in(file("modules/parsers"))
+  .dependsOn(core)
+  .settings(
+    name := "zio-langchain-parsers",
+    libraryDependencies ++= commonDependencies
+  )
+
 lazy val integrationOpenAI = project
   .in(file("modules/integrations/openai"))
   .dependsOn(core, models, embeddings)
@@ -162,14 +181,21 @@ lazy val integrationOpenAI = project
     libraryDependencies ++= commonDependencies
   )
 
-// Commented out as langchain4j-anthropic dependency is not available
-// lazy val integrationAnthropic = project
-//   .in(file("modules/integrations/anthropic"))
-//   .dependsOn(core, models)
-//   .settings(
-//     name := "zio-langchain-anthropic",
-//     libraryDependencies ++= commonDependencies
-//   )
+lazy val integrationAnthropic = project
+  .in(file("modules/integrations/anthropic"))
+  .dependsOn(core, models)
+  .settings(
+    name := "zio-langchain-anthropic",
+    libraryDependencies ++= commonDependencies
+  )
+
+lazy val integrationPinecone = project
+  .in(file("modules/integrations/pinecone"))
+  .dependsOn(core, models, embeddings, retrievers)
+  .settings(
+    name := "zio-langchain-pinecone",
+    libraryDependencies ++= commonDependencies
+  )
 
 // Commented out as langchain4j-huggingface dependency may not be compatible with chosen version
 // lazy val integrationHuggingFace = project
@@ -189,8 +215,12 @@ lazy val examples = project
     chains,
     agents,
     integrationOpenAI,
+    integrationAnthropic,
+    integrationPinecone,
     documentLoaders,
     documentParsers,
+    documentProcessors,
+    parsers,
     retrievers,
     memory,
     tools
