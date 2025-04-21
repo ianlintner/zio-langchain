@@ -37,12 +37,14 @@ sbt "examples/runMain zio.langchain.examples.AdvancedChat"
 **File**: `AdvancedChat.scala`
 
 **Description**: An enhanced chat application that demonstrates:
+
 - Streaming chat responses for real-time token generation
 - Function calling with calculator and date/time tools
 - Memory integration to maintain conversation context
 - Error handling with ZIO best practices
 
 **How to Use**:
+
 - Start a conversation with the assistant
 - Ask it to perform calculations like "What is 145 * 32?"
 - Ask for date/time information like "What's the current time?"
@@ -53,6 +55,7 @@ sbt "examples/runMain zio.langchain.examples.AdvancedChat"
 **File**: `EnhancedRAG.scala`
 
 **Description**: A robust Retrieval-Augmented Generation example that demonstrates:
+
 - Document loading with error recovery
 - Efficient embedding creation with progress reporting
 - Semantic search with similarity thresholds and fallbacks
@@ -60,6 +63,7 @@ sbt "examples/runMain zio.langchain.examples.AdvancedChat"
 - Memory integration for conversation context
 
 **How to Use**:
+
 - Place text files in a `docs` directory or use the built-in sample documents
 - Ask questions related to the document content
 - Type 'clear' to reset the conversation
@@ -70,12 +74,14 @@ sbt "examples/runMain zio.langchain.examples.AdvancedChat"
 **File**: `SimpleAgent.scala`
 
 **Description**: A basic agent implementation that demonstrates:
+
 - Decision-making for tool selection
 - ReAct pattern (Reason-Act-Observe) for agent thinking
 - Calculator and search tool implementation
 - Proper error handling and iteration limits
 
 **How to Use**:
+
 - Ask questions that might require calculation or information lookup
 - The agent will decide which tool to use (if any) and return a comprehensive answer
 - You can ask complex questions that might require multiple tool calls
@@ -103,7 +109,7 @@ All examples demonstrate:
 
 ### AdvancedChat
 
-```
+```bash
 Welcome to ZIO LangChain Advanced Chat!
 This chat supports streaming responses and calculations.
 Type 'exit' to quit.
@@ -122,7 +128,7 @@ Goodbye!
 
 ### EnhancedRAG
 
-```
+```bash
 Welcome to ZIO LangChain Enhanced RAG Example!
 Loading documents and creating embeddings...
 Loaded 5 documents
@@ -146,7 +152,7 @@ Goodbye!
 
 ### SimpleAgent
 
-```
+```bash
 Welcome to ZIO LangChain Simple Agent Example!
 This agent can use tools to help answer your questions.
 Type 'exit' to quit.
@@ -163,3 +169,4 @@ The square root of 441 is 21.
 
 > exit
 Goodbye!
+```

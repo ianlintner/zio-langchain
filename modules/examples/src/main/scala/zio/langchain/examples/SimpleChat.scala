@@ -7,6 +7,7 @@ import zio.langchain.core.model.LLM
 import zio.langchain.core.domain.*
 import zio.langchain.core.memory.*
 import zio.langchain.core.errors.{MemoryError, LangChainError}
+import zio.langchain.memory.BufferMemory
 import zio.langchain.integrations.openai.*
 
 /**
@@ -57,20 +58,19 @@ object SimpleChat extends ZIOAppDefault:
           private val messages = scala.collection.mutable.ArrayBuffer[ChatMessage]()
           
           override def add(message: ChatMessage): ZIO[Any, MemoryError, Unit] =
-            ZIO.attempt {
+            ZIO.succeed {
               messages.append(message)
               ()
-            }.mapError(e => MemoryError(e, "Failed to add message"))
+            }
           
           override def get: ZIO[Any, MemoryError, Seq[ChatMessage]] =
-            ZIO.attempt(messages.toSeq)
-              .mapError(e => MemoryError(e, "Failed to get messages"))
+            ZIO.succeed(messages.toSeq)
           
           override def clear: ZIO[Any, MemoryError, Unit] =
-            ZIO.attempt {
+            ZIO.succeed {
               messages.clear()
               ()
-            }.mapError(e => MemoryError(e, "Failed to clear messages"))
+            }
         }
       }
     )

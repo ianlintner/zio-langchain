@@ -94,6 +94,7 @@ Then you can run any of the examples with:
 ```
 
 Available examples:
+
 - `SimpleChat` - Basic chat application using ZIO LangChain
 - `SimpleRAG` - Retrieval-Augmented Generation with document retrieval
 - `AdvancedChat` - Chat with streaming responses and memory capabilities
@@ -101,11 +102,13 @@ Available examples:
 - `SimpleAgent` - Agent that can use tools to complete tasks
 
 Example usage:
+
 ```bash
 OPENAI_API_KEY=your-api-key ./run-examples.sh SimpleChat
 ```
 
 To see all available examples and run them interactively, run the script without arguments:
+
 ```bash
 ./run-examples.sh
 ```
@@ -290,4 +293,4 @@ val result = agent.run("What is 25 * 76 + 14?")
 
 ## License
 
-This project is licensed under the Apache License, Version 2.0 - see the LICENSE file for details.
+This project is licensed under the Apache License, Version 2.0 - see the LICENSE file for details
