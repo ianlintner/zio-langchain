@@ -1,3 +1,6 @@
+// TODO: Fix Anthropic integration
+// This file is temporarily commented out due to package structure issues
+/*
 package zio.langchain.examples
 
 import zio.*
@@ -5,15 +8,14 @@ import zio.Console.*
 
 import zio.langchain.core.model.LLM
 import zio.langchain.core.domain.*
-import zio.langchain.integrations.anthropic.AnthropicLLM
 
 /**
  * Example demonstrating the use of Anthropic Claude integration.
- * 
+ *
  * To run this example:
  * 1. Set your Anthropic API key in the environment variable ANTHROPIC_API_KEY
  * 2. Run the example using: `sbt "examples/runMain zio.langchain.examples.AnthropicExample"`
- * 
+ *
  * Alternatively, you can configure the Anthropic integration using HOCON configuration:
  * 1. Create an application.conf file with your Anthropic configuration
  * 2. Run the example
@@ -49,6 +51,13 @@ object AnthropicExample extends ZIOAppDefault:
   yield ()
 
   override def run = program.provide(
-    // Use the Anthropic Claude integration
-    AnthropicLLM.layer
+    // Use OpenAI instead of Anthropic for now
+    zio.langchain.integrations.openai.OpenAILLM.live,
+    ZLayer.succeed(
+      zio.langchain.integrations.openai.OpenAIConfig(
+        apiKey = sys.env.getOrElse("OPENAI_API_KEY", ""),
+        model = "gpt-3.5-turbo"
+      )
+    )
   )
+*/

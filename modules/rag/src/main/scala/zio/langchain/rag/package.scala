@@ -3,7 +3,6 @@ package zio.langchain
 import zio.*
 import zio.langchain.core.model.LLM
 import zio.langchain.core.retriever.Retriever
-import zio.langchain.rag.{QueryTransformer, TransformingRetriever, MultiTransformingRetriever}
 
 /**
  * The rag package provides advanced Retrieval-Augmented Generation (RAG) capabilities,

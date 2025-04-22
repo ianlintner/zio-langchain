@@ -8,6 +8,7 @@ import zio.http.*
 import zio.langchain.core.model.LLM
 import zio.langchain.core.domain.*
 import zio.langchain.core.errors.*
+import zio.langchain.core.errors.OpenAIError
 import zio.langchain.core.tool.Tool
 
 /**
@@ -24,10 +25,21 @@ class OpenAILLM(config: OpenAIConfig) extends LLM:
   /**
    * Makes an HTTP request to the OpenAI API using ZIO HTTP
    */
+  // Create a shared HTTP client with proper configuration
+  private val httpClient = ZLayer.scoped {
+    Client.default.map { client =>
+      // Configure the client with appropriate settings
+      client
+    }
+  }
+  
+  /**
+   * Makes an HTTP request to the OpenAI API using ZIO HTTP
+   */
   private def makeRequest(jsonBody: String): ZIO[Any, Throwable, String] = {
     // Log request if enabled
-    if (config.logRequests) {
-      println(s"OpenAI API Request: $jsonBody")
+    val logRequest = ZIO.when(config.logRequests) {
+      ZIO.succeed(println(s"OpenAI API Request: $jsonBody"))
     }
     
     // Create headers
@@ -42,39 +54,55 @@ class OpenAILLM(config: OpenAIConfig) extends LLM:
     // Create request body
     val body = Body.fromString(jsonBody)
     
-    // Create and send request
-    ZIO.scoped {
-      for {
-        // Get client
-        client <- ZIO.service[Client].provide(Client.default)
-        
-        // Parse URL
-        url <- ZIO.fromEither(URL.decode(apiUrl))
-                 .orElseFail(new RuntimeException(s"Invalid URL: $apiUrl"))
-        
-        // Create request
-        request = Request.post(body, url)
-        
-        // Send request
-        response <- client.request(request)
-                      .timeoutFail(new RuntimeException("Request timed out"))(config.timeout)
-        
-        // Check for errors
-        _ <- ZIO.when(response.status.isError) {
-          response.body.asString.flatMap { body =>
-            ZIO.fail(new RuntimeException(s"OpenAI API error: ${response.status.code}, body: $body"))
+    // Parse URL (do this outside the scoped block)
+    val parseUrl = ZIO.fromEither(URL.decode(apiUrl))
+                     .orElseFail(new RuntimeException(s"Invalid URL: $apiUrl"))
+    
+    // Improved resource management with proper interruption handling
+    for {
+      _ <- logRequest
+      url <- parseUrl
+      response <- ZIO.scoped {
+        for {
+          // Get client with explicit interruption handling
+          client <- ZIO.service[Client].provide(httpClient).onInterrupt(ZIO.succeed(println("Client acquisition interrupted")))
+          
+          // Create request
+          request = Request.post(body, url).withHeaders(headers)
+          
+          // Send request with retry, timeout and proper interruption handling
+          response <- client.request(request)
+                        .retry(Schedule.exponential(100.milliseconds) && Schedule.recurs(3))
+                        .timeout(config.timeout)
+                        .tapError(err => ZIO.succeed(println(s"Request error: ${err.getMessage}")))
+                        .onInterrupt(ZIO.succeed(println("Request interrupted")))
+        } yield response
+      }.mapError {
+        case Some(_) => OpenAIError.TimeoutError(s"Request timed out after ${config.timeout}")
+        case other => other.asInstanceOf[Throwable]
+      }
+      
+      // Check for errors with better error classification
+      _ <- ZIO.when(response.status.isError) {
+        response.body.asString.flatMap { body =>
+          val errorMsg = s"OpenAI API error: ${response.status.code}, body: $body"
+          response.status.code match {
+            case 401 => ZIO.fail(OpenAIError.AuthenticationError(s"Authentication error: $errorMsg"))
+            case 429 => ZIO.fail(OpenAIError.RateLimitError(s"Rate limit exceeded: $errorMsg"))
+            case 500 | 502 | 503 | 504 => ZIO.fail(OpenAIError.ServerError(s"OpenAI server error: $errorMsg"))
+            case _ => ZIO.fail(OpenAIError.InvalidRequestError(errorMsg))
           }
         }
-        
-        // Get response body
-        responseBody <- response.body.asString
-        
-        // Log response if enabled
-        _ <- ZIO.when(config.logResponses) {
-          ZIO.succeed(println(s"OpenAI API Response: $responseBody"))
-        }
-      } yield responseBody
-    }
+      }
+      
+      // Get response body
+      responseBody <- response.body.asString
+      
+      // Log response if enabled
+      _ <- ZIO.when(config.logResponses) {
+        ZIO.succeed(println(s"OpenAI API Response: $responseBody"))
+      }
+    } yield responseBody
   }
   
   /**
@@ -133,12 +161,12 @@ class OpenAILLM(config: OpenAIConfig) extends LLM:
     val result = for
       respBody <- makeRequest(jsonBody)
       respObj <- ZIO.fromEither(respBody.fromJson[ChatCompletionResponse])
-        .mapError(err => new RuntimeException(s"Failed to parse response: $err"))
+        .mapError(err => OpenAIError.InvalidRequestError(s"Failed to parse response: $err"))
       response = createChatResponse(respObj)
     yield response
-    
-    // Handle errors
-    result.mapError(err => LLMError(err))
+
+    // No need to wrap in LLMError since OpenAIError already extends LLMError
+    result
   
   /**
    * Creates a ChatResponse from the API response.

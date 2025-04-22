@@ -129,3 +129,54 @@ object errors:
         case Some(text) => s"$message: ${cause.getMessage}\nOriginal output: $text"
         case None => s"$message: ${cause.getMessage}"
     override def getCause: Throwable = cause
+    
+  /**
+   * Base trait for OpenAI-specific errors.
+   */
+  sealed trait OpenAIError extends LangChainError
+  
+  // Concrete implementations of OpenAI errors
+  class OpenAIAuthenticationError(message: String)
+    extends RuntimeException(s"Authentication error: $message")
+    with OpenAIError
+  
+  class OpenAIRateLimitError(message: String)
+    extends RuntimeException(s"Rate limit exceeded: $message")
+    with OpenAIError
+  
+  class OpenAIServerError(message: String)
+    extends RuntimeException(s"OpenAI server error: $message")
+    with OpenAIError
+  
+  class OpenAIInvalidRequestError(message: String)
+    extends RuntimeException(s"Invalid request: $message")
+    with OpenAIError
+  
+  class OpenAITimeoutError(message: String)
+    extends RuntimeException(s"Request timed out: $message")
+    with OpenAIError
+  
+  class OpenAIUnknownError(cause: Throwable)
+    extends RuntimeException(s"Unknown OpenAI error: ${cause.getMessage}", cause)
+    with OpenAIError
+  
+  // Factory object for creating OpenAI errors
+  object OpenAIError {
+    def authenticationError(message: String): OpenAIError =
+      new OpenAIAuthenticationError(message)
+    
+    def rateLimitError(message: String): OpenAIError =
+      new OpenAIRateLimitError(message)
+    
+    def serverError(message: String): OpenAIError =
+      new OpenAIServerError(message)
+    
+    def invalidRequestError(message: String): OpenAIError =
+      new OpenAIInvalidRequestError(message)
+    
+    def timeoutError(message: String): OpenAIError =
+      new OpenAITimeoutError(message)
+    
+    def unknownError(cause: Throwable): OpenAIError =
+      new OpenAIUnknownError(cause)
+  }
