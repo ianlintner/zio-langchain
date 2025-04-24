@@ -70,7 +70,7 @@ class JsonSchemaOutputParser[T: JsonDecoder: JsonEncoder] private (
     }.flatMap { parsed =>
       // Validate the parsed object against the schema
       validateAgainstSchema(parsed).mapError { error =>
-        error.copy(output = Some(text))
+        new OutputParsingError(error.getCause, error.getMessage, Some(text))
       }
     }
 

@@ -3,17 +3,17 @@ package zio.langchain.integrations.openai
 import zio.*
 
 /**
- * Configuration for OpenAI models.
+ * Configuration for the OpenAI API.
  *
- * @param apiKey The OpenAI API key
- * @param model The model identifier (e.g., "gpt-4", "gpt-3.5-turbo")
- * @param temperature The temperature parameter (0.0 to 1.0)
- * @param maxTokens The maximum number of tokens to generate (optional)
- * @param organizationId The OpenAI organization ID (optional)
+ * @param apiKey The API key for the OpenAI API
+ * @param model The model to use for completions
+ * @param temperature The temperature to use for completions
+ * @param maxTokens The maximum number of tokens to generate
+ * @param organizationId The organization ID to use for the OpenAI API
  * @param timeout The timeout for API requests
- * @param enableStreaming Whether to enable streaming responses (if supported by the model)
- * @param logRequests Whether to log API requests
- * @param logResponses Whether to log API responses
+ * @param enableStreaming Whether to enable streaming for completions
+ * @param logRequests Whether to log requests to the OpenAI API
+ * @param logResponses Whether to log responses from the OpenAI API
  */
 case class OpenAIConfig(
   apiKey: String,
@@ -27,22 +27,16 @@ case class OpenAIConfig(
   logResponses: Boolean = false
 ) {
   // Add validation method
-  def validate: Either[String, OpenAIConfig] =
+  def validate: Either[String, OpenAIConfig] = 
     if (apiKey.trim.isEmpty) Left("OpenAI API key is missing or empty")
     else Right(this)
 }
 
-/**
- * Companion object for OpenAIConfig.
- */
 object OpenAIConfig:
-  /**
-   * Creates an OpenAIConfig from environment variables.
-   */
   /**
    * Creates an OpenAIConfig from environment variables with validation.
    */
-  def fromEnv: ZIO[Any, String, OpenAIConfig] =
+  def fromEnv: ZIO[Any, String, OpenAIConfig] = 
     ZIO.attempt {
       OpenAIConfig(
         apiKey = sys.env.getOrElse("OPENAI_API_KEY", ""),
@@ -57,11 +51,9 @@ object OpenAIConfig:
         logRequests = sys.env.getOrElse("OPENAI_LOG_REQUESTS", "false").toBoolean,
         logResponses = sys.env.getOrElse("OPENAI_LOG_RESPONSES", "false").toBoolean
       )
-    }.flatMap(config => ZIO.fromEither(config.validate))
+    }.catchAll(ex => ZIO.fail(s"Error creating OpenAIConfig: ${ex.getMessage}"))
+     .flatMap(config => ZIO.fromEither(config.validate))
   
-  /**
-   * Creates a ZLayer that provides an OpenAIConfig from environment variables.
-   */
   /**
    * Creates a ZLayer that provides a validated OpenAIConfig from environment variables.
    */

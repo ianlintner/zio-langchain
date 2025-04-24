@@ -1,182 +1,171 @@
 package zio.langchain.core
 
 /**
- * Error types for ZIO LangChain.
+ * Errors that can occur in the LangChain library.
  */
-object errors:
+object errors {
+
   /**
-   * Base trait for all errors in ZIO LangChain.
+   * Base trait for all errors in the LangChain library.
    */
   trait LangChainError extends Throwable
+
   /**
-   * Error that occurs during LLM operations.
-   *
-   * @param cause The underlying cause of the error
-   * @param message A descriptive error message
+   * Error that occurs in an LLM.
    */
-  case class LLMError(
-    cause: Throwable,
-    message: String = "LLM error occurred"
-  ) extends LangChainError:
-    override def getMessage: String = s"$message: ${cause.getMessage}"
+  case class LLMError(cause: Throwable) extends LangChainError {
+    override def getMessage: String = cause.getMessage
     override def getCause: Throwable = cause
-  
-  /**
-   * Error that occurs during embedding operations.
-   *
-   * @param cause The underlying cause of the error
-   * @param message A descriptive error message
-   */
-  case class EmbeddingError(
-    cause: Throwable,
-    message: String = "Embedding error occurred"
-  ) extends LangChainError:
-    override def getMessage: String = s"$message: ${cause.getMessage}"
-    override def getCause: Throwable = cause
-  
-  /**
-   * Error that occurs during document retrieval operations.
-   *
-   * @param cause The underlying cause of the error
-   * @param message A descriptive error message
-   */
-  case class RetrieverError(
-    cause: Throwable,
-    message: String = "Retrieval error occurred"
-  ) extends LangChainError:
-    override def getMessage: String = s"$message: ${cause.getMessage}"
-    override def getCause: Throwable = cause
-  
-  /**
-   * Error that occurs during memory operations.
-   *
-   * @param cause The underlying cause of the error
-   * @param message A descriptive error message
-   */
-  case class MemoryError(
-    cause: Throwable,
-    message: String = "Memory error occurred"
-  ) extends LangChainError:
-    override def getMessage: String = s"$message: ${cause.getMessage}"
-    override def getCause: Throwable = cause
-  
-  /**
-   * Error that occurs during agent operations.
-   *
-   * @param cause The underlying cause of the error
-   * @param message A descriptive error message
-   */
-  case class AgentError(
-    cause: Throwable,
-    message: String = "Agent error occurred"
-  ) extends LangChainError:
-    override def getMessage: String = s"$message: ${cause.getMessage}"
-    override def getCause: Throwable = cause
-    
-  /**
-   * Error that occurs during document loading operations.
-   *
-   * @param cause The underlying cause of the error
-   * @param message A descriptive error message
-   */
-  case class DocumentLoadingError(
-    cause: Throwable,
-    message: String = "Document loading error occurred"
-  ) extends LangChainError:
-    override def getMessage: String = s"$message: ${cause.getMessage}"
-    override def getCause: Throwable = cause
-    
-  /**
-   * Error that occurs during document parsing operations.
-   *
-   * @param cause The underlying cause of the error
-   * @param message A descriptive error message
-   */
-  case class DocumentParsingError(
-    cause: Throwable,
-    message: String = "Document parsing error occurred"
-  ) extends LangChainError:
-    override def getMessage: String = s"$message: ${cause.getMessage}"
-    override def getCause: Throwable = cause
-    
-  /**
-   * Error that occurs during tool execution.
-   *
-   * @param cause The underlying cause of the error
-   * @param message A descriptive error message
-   */
-  case class ToolExecutionError(
-    cause: Throwable,
-    message: String = "Tool execution error occurred"
-  ) extends LangChainError:
-    override def getMessage: String = s"$message: ${cause.getMessage}"
-    override def getCause: Throwable = cause
-    
-  /**
-   * Error that occurs during output parsing operations.
-   *
-   * @param cause The underlying cause of the error
-   * @param message A descriptive error message
-   * @param output The original output that failed to parse
-   */
-  case class OutputParsingError(
-    cause: Throwable,
-    message: String = "Output parsing error occurred",
-    output: Option[String] = None
-  ) extends LangChainError:
-    override def getMessage: String =
-      output match
-        case Some(text) => s"$message: ${cause.getMessage}\nOriginal output: $text"
-        case None => s"$message: ${cause.getMessage}"
-    override def getCause: Throwable = cause
-    
-  /**
-   * Base trait for OpenAI-specific errors.
-   */
-  sealed trait OpenAIError extends LangChainError
-  
-  // Concrete implementations of OpenAI errors
-  class OpenAIAuthenticationError(message: String)
-    extends RuntimeException(s"Authentication error: $message")
-    with OpenAIError
-  
-  class OpenAIRateLimitError(message: String)
-    extends RuntimeException(s"Rate limit exceeded: $message")
-    with OpenAIError
-  
-  class OpenAIServerError(message: String)
-    extends RuntimeException(s"OpenAI server error: $message")
-    with OpenAIError
-  
-  class OpenAIInvalidRequestError(message: String)
-    extends RuntimeException(s"Invalid request: $message")
-    with OpenAIError
-  
-  class OpenAITimeoutError(message: String)
-    extends RuntimeException(s"Request timed out: $message")
-    with OpenAIError
-  
-  class OpenAIUnknownError(cause: Throwable)
-    extends RuntimeException(s"Unknown OpenAI error: ${cause.getMessage}", cause)
-    with OpenAIError
-  
-  // Factory object for creating OpenAI errors
-  object OpenAIError {
-    def authenticationError(message: String): OpenAIError =
-      new OpenAIAuthenticationError(message)
-    
-    def rateLimitError(message: String): OpenAIError =
-      new OpenAIRateLimitError(message)
-    
-    def serverError(message: String): OpenAIError =
-      new OpenAIServerError(message)
-    
-    def invalidRequestError(message: String): OpenAIError =
-      new OpenAIInvalidRequestError(message)
-    
-    def timeoutError(message: String): OpenAIError =
-      new OpenAITimeoutError(message)
-    
-    def unknownError(cause: Throwable): OpenAIError =
-      new OpenAIUnknownError(cause)
   }
+
+  /**
+   * Error that occurs in a chain.
+   */
+  case class ChainError(cause: Throwable) extends LangChainError {
+    override def getMessage: String = cause.getMessage
+    override def getCause: Throwable = cause
+  }
+
+  /**
+   * Error that occurs in a tool.
+   */
+  case class ToolError(cause: Throwable, message: String = "") extends LangChainError {
+    override def getMessage: String = if (message.isEmpty) cause.getMessage else message
+    override def getCause: Throwable = cause
+  }
+
+  /**
+   * Error that occurs in an agent.
+   */
+  case class AgentError(cause: Throwable) extends LangChainError {
+    override def getMessage: String = cause.getMessage
+    override def getCause: Throwable = cause
+  }
+
+  /**
+   * Error that occurs in a retriever.
+   */
+  case class RetrieverError(cause: Throwable, message: String = "") extends LangChainError {
+    override def getMessage: String = if (message.isEmpty) cause.getMessage else message
+    override def getCause: Throwable = cause
+  }
+
+  /**
+   * Error that occurs in a memory.
+   */
+  case class MemoryError(cause: Throwable, message: String = "") extends LangChainError {
+    override def getMessage: String = if (message.isEmpty) cause.getMessage else message
+    override def getCause: Throwable = cause
+  }
+
+  /**
+   * Error that occurs in a document loader.
+   */
+  case class DocumentLoaderError(cause: Throwable) extends LangChainError {
+    override def getMessage: String = cause.getMessage
+    override def getCause: Throwable = cause
+  }
+
+  /**
+   * Error that occurs in a document parser.
+   */
+  case class DocumentParserError(cause: Throwable) extends LangChainError {
+    override def getMessage: String = cause.getMessage
+    override def getCause: Throwable = cause
+  }
+
+  /**
+   * Error that occurs in an embedding model.
+   */
+  case class EmbeddingError(cause: Throwable, message: String = "") extends LangChainError {
+    override def getMessage: String = if (message.isEmpty) cause.getMessage else message
+    override def getCause: Throwable = cause
+  }
+
+  /**
+   * Error that occurs in a vector store.
+   */
+  case class VectorStoreError(cause: Throwable) extends LangChainError {
+    override def getMessage: String = cause.getMessage
+    override def getCause: Throwable = cause
+  }
+
+  /**
+   * Error that occurs in a parser.
+   */
+  case class ParserError(cause: Throwable) extends LangChainError {
+    override def getMessage: String = cause.getMessage
+    override def getCause: Throwable = cause
+  }
+
+  /**
+   * Error that occurs in a prompt template.
+   */
+  case class PromptTemplateError(cause: Throwable) extends LangChainError {
+    override def getMessage: String = cause.getMessage
+    override def getCause: Throwable = cause
+  }
+
+  /**
+   * Error that occurs in a configuration.
+   */
+  case class ConfigurationError(message: String) extends LangChainError {
+    override def getMessage: String = message
+  }
+
+  /**
+   * Error that occurs when executing a tool.
+   */
+  case class ToolExecutionError(message: String, cause: Throwable = null) extends LangChainError {
+    override def getMessage: String = message
+    override def getCause: Throwable = cause
+  }
+  
+  /**
+   * Error that occurs during output parsing.
+   */
+  case class OutputParsingError(cause: Throwable, message: String, rawText: Option[String] = None) extends LangChainError {
+    override def getMessage: String = message
+    override def getCause: Throwable = cause
+  }
+
+  /**
+   * Error that occurs when loading a document.
+   */
+  case class DocumentLoadingError(cause: Throwable) extends LangChainError {
+    override def getMessage: String = cause.getMessage
+    override def getCause: Throwable = cause
+  }
+
+  /**
+   * Error that occurs when parsing a document.
+   */
+  case class DocumentParsingError(cause: Throwable) extends LangChainError {
+    override def getMessage: String = cause.getMessage
+    override def getCause: Throwable = cause
+  }
+
+  /**
+   * OpenAI API specific error helpers
+   */
+  object OpenAIError {
+    // Create wrapper methods to convert OpenAI errors to LLMError
+    def authenticationError(message: String): LLMError = 
+      LLMError(new RuntimeException(s"Authentication error: $message"))
+    
+    def rateLimitError(message: String): LLMError = 
+      LLMError(new RuntimeException(s"Rate limit exceeded: $message"))
+    
+    def serverError(message: String): LLMError = 
+      LLMError(new RuntimeException(s"OpenAI server error: $message"))
+    
+    def invalidRequestError(message: String): LLMError = 
+      LLMError(new RuntimeException(s"Invalid request: $message"))
+    
+    def timeoutError(message: String): LLMError = 
+      LLMError(new RuntimeException(s"Request timed out: $message"))
+    
+    def unknownError(cause: Throwable): LLMError = 
+      LLMError(cause)
+  }
+}

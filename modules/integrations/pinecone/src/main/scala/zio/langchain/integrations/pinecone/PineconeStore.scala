@@ -229,7 +229,7 @@ class PineconeStore private (
       
       // Parse response
       response <- ZIO.fromEither(responseJson.fromJson[QueryResponse])
-        .mapError(err => RetrieverError(new RuntimeException(s"Failed to parse Pinecone response: $err")))
+        .mapError(err => RetrieverError(new RuntimeException(s"Failed to parse Pinecone response: $err"), ""))
       
       // Convert to documents with scores
       documents = response.matches.flatMap { m =>

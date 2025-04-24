@@ -68,10 +68,7 @@ object Tool:
   def get(toolName: String): ZIO[Map[String, Tool[Any, LangChainError]], ToolExecutionError, Tool[Any, LangChainError]] =
     ZIO.serviceWithZIO[Map[String, Tool[Any, LangChainError]]] { tools =>
       ZIO.fromOption(tools.get(toolName))
-        .mapError(_ => ToolExecutionError(
-          new NoSuchElementException(s"Tool not found: $toolName"),
-          s"Tool not found: $toolName"
-        ))
+        .mapError(_ => ToolExecutionError(s"Tool not found: $toolName", new NoSuchElementException()))
     }
   
   /**

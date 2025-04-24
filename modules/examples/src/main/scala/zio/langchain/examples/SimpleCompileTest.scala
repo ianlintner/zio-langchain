@@ -2,9 +2,11 @@ package zio.langchain.examples
 
 import zio.*
 import zio.Console.*
+import zio.ExitCode
 
 import zio.langchain.core.model.LLM
 import zio.langchain.core.domain.*
+import zio.langchain.core.errors.*
 import zio.langchain.integrations.openai.{OpenAIConfig, OpenAILLM}
 import zio.langchain.chains.LLMChain
 
@@ -21,16 +23,41 @@ object SimpleCompileTest extends ZIOAppDefault:
     program.provide(
       // OpenAI LLM layer
       OpenAILLM.live,
-      // OpenAI configuration layer
-      ZLayer.succeed(
-        OpenAIConfig(
-          apiKey = sys.env.getOrElse("OPENAI_API_KEY", ""),
-          model = sys.env.getOrElse("OPENAI_MODEL", "gpt-3.5-turbo"),
-          temperature = 0.7,
-          maxTokens = Some(150)
+      // OpenAI configuration layer with validation
+      ZLayer.fromZIO(
+        ZIO.attempt {
+          OpenAIConfig(
+            apiKey = sys.env.getOrElse("OPENAI_API_KEY", ""),
+            model = sys.env.getOrElse("OPENAI_MODEL", "gpt-3.5-turbo"),
+            temperature = 0.7,
+            maxTokens = Some(150)
+          )
+        }.flatMap(config => 
+          if (config.apiKey.trim.isEmpty) 
+            ZIO.fail(new RuntimeException("OpenAI API key is missing. Please set the OPENAI_API_KEY environment variable."))
+          else 
+            ZIO.succeed(config)
         )
       )
-    )
+    ).catchAllCause { cause =>
+      val error = cause.failureOption.getOrElse(new RuntimeException("Unknown error"))
+      val message = error.getMessage
+      val errorPrefix = if (message.contains("Authentication error")) {
+        "Authentication Error"
+      } else if (message.contains("Rate limit exceeded")) {
+        "Rate Limit Error"
+      } else if (message.contains("OpenAI server error")) {
+        "OpenAI Server Error"
+      } else if (message.contains("Request timed out")) {
+        "Timeout Error"
+      } else {
+        "Unexpected Error"
+      }
+      
+      for {
+        _ <- printLine(s"$errorPrefix: $message")
+      } yield ExitCode.failure
+    }
     
   val program = for
     // Print welcome message

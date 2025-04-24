@@ -8,7 +8,6 @@ import zio.http.*
 import zio.langchain.core.model.LLM
 import zio.langchain.core.domain.*
 import zio.langchain.core.errors.*
-import zio.langchain.core.errors.OpenAIError
 import zio.langchain.core.tool.Tool
 
 /**
@@ -25,84 +24,60 @@ class OpenAILLM(config: OpenAIConfig) extends LLM:
   /**
    * Makes an HTTP request to the OpenAI API using ZIO HTTP
    */
-  // Create a shared HTTP client with proper configuration
-  private val httpClient = ZLayer.scoped {
-    Client.default.map { client =>
-      // Configure the client with appropriate settings
-      client
-    }
-  }
-  
-  /**
-   * Makes an HTTP request to the OpenAI API using ZIO HTTP
-   */
   private def makeRequest(jsonBody: String): ZIO[Any, Throwable, String] = {
     // Log request if enabled
-    val logRequest = ZIO.when(config.logRequests) {
-      ZIO.succeed(println(s"OpenAI API Request: $jsonBody"))
+    if (config.logRequests) {
+      println(s"OpenAI API Request: $jsonBody")
     }
     
-    // Create headers
-    val headers = Headers(
-      Header.ContentType(MediaType.application.json),
-      Header.Authorization.Bearer(config.apiKey)
-    ) ++ (config.organizationId match {
-      case Some(orgId) => Headers(Header.Custom("OpenAI-Organization", orgId))
-      case None => Headers.empty
-    })
+    // Create request headers
+    val authHeader = s"Bearer ${config.apiKey}"
+    val orgHeader = config.organizationId.map(orgId => s"OpenAI-Organization: $orgId").getOrElse("")
     
-    // Create request body
-    val body = Body.fromString(jsonBody)
-    
-    // Parse URL (do this outside the scoped block)
-    val parseUrl = ZIO.fromEither(URL.decode(apiUrl))
-                     .orElseFail(new RuntimeException(s"Invalid URL: $apiUrl"))
-    
-    // Improved resource management with proper interruption handling
-    for {
-      _ <- logRequest
-      url <- parseUrl
-      response <- ZIO.scoped {
-        for {
-          // Get client with explicit interruption handling
-          client <- ZIO.service[Client].provide(httpClient).onInterrupt(ZIO.succeed(println("Client acquisition interrupted")))
-          
-          // Create request
-          request = Request.post(body, url).withHeaders(headers)
-          
-          // Send request with retry, timeout and proper interruption handling
-          response <- client.request(request)
-                        .retry(Schedule.exponential(100.milliseconds) && Schedule.recurs(3))
-                        .timeout(config.timeout)
-                        .tapError(err => ZIO.succeed(println(s"Request error: ${err.getMessage}")))
-                        .onInterrupt(ZIO.succeed(println("Request interrupted")))
-        } yield response
-      }.mapError {
-        case Some(_) => OpenAIError.TimeoutError(s"Request timed out after ${config.timeout}")
-        case other => other.asInstanceOf[Throwable]
+    // Use Java's HttpClient directly instead of ZIO HTTP
+    ZIO.attempt {
+      import java.net.http.{HttpClient, HttpRequest, HttpResponse}
+      import java.net.URI
+      import java.time.Duration
+      
+      val client = HttpClient.newBuilder()
+        .connectTimeout(Duration.ofMillis(config.timeout.toMillis))
+        .build()
+        
+      val requestBuilder = HttpRequest.newBuilder()
+        .uri(URI.create(apiUrl))
+        .header("Content-Type", "application/json")
+        .header("Authorization", authHeader)
+        
+      // Add organization header if present
+      val requestWithOrg = if (orgHeader.nonEmpty) {
+        requestBuilder.header("OpenAI-Organization", config.organizationId.get)
+      } else {
+        requestBuilder
       }
       
-      // Check for errors with better error classification
-      _ <- ZIO.when(response.status.isError) {
-        response.body.asString.flatMap { body =>
-          val errorMsg = s"OpenAI API error: ${response.status.code}, body: $body"
-          response.status.code match {
-            case 401 => ZIO.fail(OpenAIError.AuthenticationError(s"Authentication error: $errorMsg"))
-            case 429 => ZIO.fail(OpenAIError.RateLimitError(s"Rate limit exceeded: $errorMsg"))
-            case 500 | 502 | 503 | 504 => ZIO.fail(OpenAIError.ServerError(s"OpenAI server error: $errorMsg"))
-            case _ => ZIO.fail(OpenAIError.InvalidRequestError(errorMsg))
-          }
-        }
+      // Build and send the request
+      val request = requestWithOrg
+        .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+        .timeout(Duration.ofMillis(config.timeout.toMillis))
+        .build()
+        
+      val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+      
+      // Check for errors
+      if (response.statusCode() >= 400) {
+        throw new RuntimeException(s"OpenAI API error: ${response.statusCode()}, body: ${response.body()}")
       }
       
-      // Get response body
-      responseBody <- response.body.asString
+      val responseBody = response.body()
       
       // Log response if enabled
-      _ <- ZIO.when(config.logResponses) {
-        ZIO.succeed(println(s"OpenAI API Response: $responseBody"))
+      if (config.logResponses) {
+        println(s"OpenAI API Response: $responseBody")
       }
-    } yield responseBody
+      
+      responseBody
+    }
   }
   
   /**
@@ -161,12 +136,12 @@ class OpenAILLM(config: OpenAIConfig) extends LLM:
     val result = for
       respBody <- makeRequest(jsonBody)
       respObj <- ZIO.fromEither(respBody.fromJson[ChatCompletionResponse])
-        .mapError(err => OpenAIError.InvalidRequestError(s"Failed to parse response: $err"))
+        .mapError(err => new RuntimeException(s"Failed to parse response: $err"))
       response = createChatResponse(respObj)
     yield response
-
-    // No need to wrap in LLMError since OpenAIError already extends LLMError
-    result
+    
+    // Handle errors
+    result.mapError(err => LLMError(err))
   
   /**
    * Creates a ChatResponse from the API response.
@@ -360,5 +335,5 @@ object OpenAILLM:
    *
    * @return A ZLayer that provides an LLM
    */
-  val fromEnv: ZLayer[Any, Nothing, LLM] =
+  val fromEnv: ZLayer[Any, String, LLM] =
     OpenAIConfig.layer >>> live
