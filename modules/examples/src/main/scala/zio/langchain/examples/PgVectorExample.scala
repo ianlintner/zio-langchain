@@ -8,49 +8,50 @@ import zio.langchain.core.domain.Document
 import zio.langchain.core.model.EmbeddingModel
 import zio.langchain.core.errors.{EmbeddingError, RetrieverError, ConfigurationError}
 import zio.langchain.integrations.openai.{OpenAIEmbedding, OpenAIEmbeddingConfig, OpenAIEmbeddingError}
-import zio.langchain.integrations.pinecone.{PineconeConfig, PineconeStore}
+import zio.langchain.integrations.pgvector.{PgVectorConfig, PgVectorStore}
 
 /**
- * Example demonstrating the use of Pinecone vector store with proper error handling
- * and configuration validation.
+ * Example demonstrating the use of PostgreSQL with pgvector extension for vector similarity search.
+ * This example shows how to store document embeddings in a PostgreSQL database and perform
+ * vector similarity search using the pgvector extension.
  */
-object PineconeExample extends ZIOAppDefault {
+object PgVectorExample extends ZIOAppDefault {
 
   /**
-   * Main program that demonstrates Pinecone integration with error handling.
+   * Main program that demonstrates PgVector integration with error handling.
    */
   override def run: ZIO[Any, Throwable, Unit] = {
     val program = for {
       // Load and validate configurations
-      pineconeConfig <- loadAndValidatePineconeConfig
-      _ <- printLine(s"Successfully validated Pinecone configuration for index: ${pineconeConfig.indexName}")
+      pgVectorConfig <- loadAndValidatePgVectorConfig
+      _ <- printLine(s"Successfully validated PgVector configuration for table: ${pgVectorConfig.table}")
       
       openaiConfig <- loadAndValidateOpenAIEmbeddingConfig
       _ <- printLine(s"Successfully validated OpenAI embedding configuration for model: ${openaiConfig.model}")
       
-      // Validate dimension compatibility between OpenAI embeddings and Pinecone index
-      _ <- validateDimensionCompatibility(openaiConfig, pineconeConfig)
+      // Validate dimension compatibility between OpenAI embeddings and PgVector table
+      _ <- validateDimensionCompatibility(openaiConfig, pgVectorConfig)
       _ <- printLine("Confirmed embedding dimension compatibility")
 
       // Create sample documents
       documents = createSampleDocuments()
       _ <- printLine(s"Created ${documents.length} sample documents")
 
-      // Initialize Pinecone store with OpenAI embeddings
-      store <- ZIO.service[PineconeStore]
-      _ <- printLine("Initialized Pinecone store")
+      // Initialize PgVector store with OpenAI embeddings
+      store <- ZIO.service[PgVectorStore]
+      _ <- printLine("Initialized PgVector store")
 
-      // Add documents to Pinecone with enhanced error handling
+      // Add documents to PgVector with enhanced error handling
       _ <- store.addDocuments(documents)
         .tapError(err => printLine(s"Error adding documents: ${err.getMessage}"))
         .retry(Schedule.exponential(1.second) && Schedule.recurs(3))
-        .tap(_ => printLine("Successfully added documents to Pinecone"))
+        .tap(_ => printLine("Successfully added documents to PgVector"))
 
-      // Query Pinecone with enhanced error handling
+      // Query PgVector with enhanced error handling
       query = "What is ZIO?"
-      _ <- printLine(s"Querying Pinecone with: '$query'")
+      _ <- printLine(s"Querying PgVector with: '$query'")
       results <- store.retrieveWithScores(query, 3)
-        .tapError(err => printLine(s"Error querying Pinecone: ${err.getMessage}"))
+        .tapError(err => printLine(s"Error querying PgVector: ${err.getMessage}"))
         .retry(Schedule.exponential(1.second) && Schedule.recurs(3))
 
       // Display results
@@ -62,11 +63,11 @@ object PineconeExample extends ZIOAppDefault {
       // Clean up (optional - uncomment to delete the documents)
       // _ <- store.deleteAll()
       //   .tapError(err => printLine(s"Error deleting documents: ${err.getMessage}"))
-      //   .tap(_ => printLine("Successfully deleted all documents from Pinecone"))
+      //   .tap(_ => printLine("Successfully deleted all documents from PgVector"))
       
       // Demonstrate proper resource cleanup
       _ <- printLine("Cleaning up resources...")
-      _ <- ZIO.succeed(()) // In a real application, you would close connections or release resources here
+      _ <- ZIO.succeed(()) // In a real application, resources are cleaned up by the scoped layer
       _ <- printLine("Resources cleaned up successfully")
     } yield ()
 
@@ -80,51 +81,60 @@ object PineconeExample extends ZIOAppDefault {
       ),
       OpenAIEmbedding.live,
       
-      // Pinecone configuration and store with default HTTP client
+      // PgVector configuration and store
       ZLayer.fromZIOEnvironment(
-        ZIO.environment[PineconeConfig].provideLayer(
-          ZLayer.fromZIO(PineconeConfig.fromEnv.mapError(err => new RuntimeException(err)))
+        ZIO.environment[PgVectorConfig].provideLayer(
+          ZLayer.fromZIO(PgVectorConfig.fromEnv.mapError(err => new RuntimeException(err)))
         )
       ),
-      // Use the liveStoreWithDefaultClient which includes a properly configured HTTP client
-      PineconeStore.liveStoreWithDefaultClient
+      // Use the scoped layer to ensure proper resource cleanup
+      PgVectorStore.scoped
     ).tapError(err => printLine(s"Application error: ${err.toString}"))
   }
 
   /**
-   * Loads and validates the Pinecone configuration with enhanced error handling.
+   * Loads and validates the PgVector configuration with enhanced error handling.
    * 
-   * This method attempts to load Pinecone configuration from environment variables,
+   * This method attempts to load PgVector configuration from environment variables,
    * validates it, and provides detailed error messages for different failure scenarios.
    * 
    * Common error cases handled:
-   * - Missing API key
-   * - Missing environment
-   * - Missing project ID
-   * - Missing index name
+   * - Missing host
+   * - Invalid port
+   * - Missing database
+   * - Missing username or password
+   * - Missing table name
    * 
-   * @return A ZIO effect that produces a validated PineconeConfig or fails with a classified error
+   * @return A ZIO effect that produces a validated PgVectorConfig or fails with a classified error
    */
-  private def loadAndValidatePineconeConfig: ZIO[Any, Throwable, PineconeConfig] = {
+  private def loadAndValidatePgVectorConfig: ZIO[Any, Throwable, PgVectorConfig] = {
     // Define a function to classify and enhance error messages
-    def classifyPineconeConfigError(errorMsg: String): Throwable = {
-      if (errorMsg.contains("API key is missing")) 
-        ConfigurationError(s"Pinecone API key is missing. Please set the PINECONE_API_KEY environment variable.")
-      else if (errorMsg.contains("environment is missing")) 
-        ConfigurationError(s"Pinecone environment is missing. Please set the PINECONE_ENVIRONMENT environment variable (e.g., 'us-west1-gcp').")
-      else if (errorMsg.contains("project ID is missing")) 
-        ConfigurationError(s"Pinecone project ID is missing. Please set the PINECONE_PROJECT_ID environment variable.")
-      else if (errorMsg.contains("index name is missing")) 
-        ConfigurationError(s"Pinecone index name is missing. Please set the PINECONE_INDEX_NAME environment variable.")
+    def classifyPgVectorConfigError(errorMsg: String): Throwable = {
+      if (errorMsg.contains("host is missing")) 
+        ConfigurationError(s"PostgreSQL host is missing. Please set the PGVECTOR_HOST environment variable.")
+      else if (errorMsg.contains("port must be positive")) 
+        ConfigurationError(s"PostgreSQL port must be positive. Please check the PGVECTOR_PORT environment variable.")
+      else if (errorMsg.contains("database is missing")) 
+        ConfigurationError(s"PostgreSQL database is missing. Please set the PGVECTOR_DATABASE environment variable.")
+      else if (errorMsg.contains("username is missing")) 
+        ConfigurationError(s"PostgreSQL username is missing. Please set the PGVECTOR_USERNAME environment variable.")
+      else if (errorMsg.contains("password is missing")) 
+        ConfigurationError(s"PostgreSQL password is missing. Please set the PGVECTOR_PASSWORD environment variable.")
+      else if (errorMsg.contains("table is missing")) 
+        ConfigurationError(s"PostgreSQL table is missing. Please set the PGVECTOR_TABLE environment variable.")
+      else if (errorMsg.contains("dimension must be positive")) 
+        ConfigurationError(s"Embedding dimension must be positive. Please check the PGVECTOR_DIMENSION environment variable.")
+      else if (errorMsg.contains("Distance type must be one of")) 
+        ConfigurationError(s"Invalid distance type. Please set PGVECTOR_DISTANCE_TYPE to one of: cosine, l2, inner.")
       else 
-        ConfigurationError(s"Pinecone configuration error: $errorMsg")
+        ConfigurationError(s"PgVector configuration error: $errorMsg")
     }
     
     // Load configuration from environment variables with enhanced error handling
-    PineconeConfig.fromEnv
-      .mapError(classifyPineconeConfigError)
+    PgVectorConfig.fromEnv
+      .mapError(classifyPgVectorConfigError)
       .tapError(err => printLine(s"Configuration error: ${err.toString}"))
-      .tap(_ => printLine("Pinecone configuration loaded successfully"))
+      .tap(_ => printLine("PgVector configuration loaded successfully"))
   }
   
   /**
@@ -163,32 +173,32 @@ object PineconeExample extends ZIOAppDefault {
   }
   
   /**
-   * Validates that the embedding dimensions match the Pinecone index dimensions.
+   * Validates that the embedding dimensions match the PgVector table dimensions.
    * 
    * This method ensures that the OpenAI embedding model's output dimension matches
-   * the dimension expected by the Pinecone index. This is critical for proper functioning
+   * the dimension expected by the PgVector table. This is critical for proper functioning
    * of the vector store, as dimension mismatches will cause runtime errors.
    * 
    * @param embeddingConfig The OpenAI embedding configuration
-   * @param pineconeConfig The Pinecone configuration
+   * @param pgVectorConfig The PgVector configuration
    * @return A ZIO effect that succeeds if dimensions match, or fails with a detailed error
    */
   private def validateDimensionCompatibility(
     embeddingConfig: OpenAIEmbeddingConfig,
-    pineconeConfig: PineconeConfig
+    pgVectorConfig: PgVectorConfig
   ): ZIO[Any, Throwable, Unit] = {
-    if (embeddingConfig.dimension != pineconeConfig.dimension) {
+    if (embeddingConfig.dimension != pgVectorConfig.dimension) {
       // Create a detailed error with actionable information
       val errorMessage =
         s"""Dimension mismatch: OpenAI embedding dimension (${embeddingConfig.dimension})
-           |does not match Pinecone index dimension (${pineconeConfig.dimension})
+           |does not match PgVector table dimension (${pgVectorConfig.dimension})
            |
            |This error occurs when the embedding model produces vectors of a different size
-           |than what the Pinecone index expects. To resolve this issue:
+           |than what the PgVector table expects. To resolve this issue:
            |
-           |1. Either update your Pinecone index to use dimension ${embeddingConfig.dimension}
-           |2. Or set OPENAI_EMBEDDING_DIMENSION=${pineconeConfig.dimension} to match your index
-           |3. Or use a different embedding model that produces ${pineconeConfig.dimension}-dimensional vectors
+           |1. Either update your PgVector table to use dimension ${embeddingConfig.dimension}
+           |2. Or set OPENAI_EMBEDDING_DIMENSION=${pgVectorConfig.dimension} to match your table
+           |3. Or use a different embedding model that produces ${pgVectorConfig.dimension}-dimensional vectors
            |""".stripMargin
       
       ZIO.fail(ConfigurationError(errorMessage))
@@ -216,9 +226,9 @@ object PineconeExample extends ZIOAppDefault {
       ),
       Document(
         id = "doc3",
-        content = "Pinecone is a vector database that makes it easy to build high-performance vector search " +
-                 "applications. It's designed for machine learning and similarity search use cases.",
-        metadata = Map("source" -> "pinecone-docs", "category" -> "database")
+        content = "PostgreSQL is a powerful, open source object-relational database system with over 35 years " +
+                 "of active development. It is known for reliability, feature robustness, and performance.",
+        metadata = Map("source" -> "postgres-docs", "category" -> "database")
       ),
       Document(
         id = "doc4",
@@ -228,9 +238,9 @@ object PineconeExample extends ZIOAppDefault {
       ),
       Document(
         id = "doc5",
-        content = "ZIO provides a comprehensive set of tools for building concurrent applications, " +
-                 "including fibers (lightweight threads), queues, semaphores, and much more.",
-        metadata = Map("source" -> "zio-docs", "category" -> "concurrency")
+        content = "pgvector is a PostgreSQL extension for vector similarity search. It provides vector data types " +
+                 "and vector similarity search operators that make it easy to store and query vector embeddings.",
+        metadata = Map("source" -> "pgvector-docs", "category" -> "database")
       )
     )
   }

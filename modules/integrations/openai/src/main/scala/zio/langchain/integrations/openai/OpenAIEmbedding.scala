@@ -20,30 +20,48 @@ case class OpenAIEmbeddingConfig(
   apiKey: String,
   model: String = "text-embedding-ada-002",
   organizationId: Option[String] = None,
-  timeout: Duration = Duration.fromSeconds(60)
-) extends zio.langchain.core.config.EmbeddingConfig
+  timeout: Duration = Duration.fromSeconds(60),
+  dimension: Int = 1536 // Default dimension for text-embedding-ada-002
+) extends zio.langchain.core.config.EmbeddingConfig {
+  /**
+   * Validates the configuration.
+   *
+   * @return Either an error message or the validated configuration
+   */
+  def validate: Either[String, OpenAIEmbeddingConfig] = {
+    if (apiKey.trim.isEmpty) Left("OpenAI API key is missing or empty")
+    else if (model.trim.isEmpty) Left("OpenAI embedding model is missing or empty")
+    else if (timeout.toMillis <= 0) Left("Timeout must be positive")
+    else if (dimension <= 0) Left("Embedding dimension must be positive")
+    else Right(this)
+  }
+}
 
 /**
  * Companion object for OpenAIEmbeddingConfig.
  */
 object OpenAIEmbeddingConfig:
   /**
-   * Creates an OpenAIEmbeddingConfig from environment variables.
+   * Creates an OpenAIEmbeddingConfig from environment variables with validation.
    */
-  def fromEnv: OpenAIEmbeddingConfig = 
-    OpenAIEmbeddingConfig(
-      apiKey = sys.env.getOrElse("OPENAI_API_KEY", ""),
-      model = sys.env.getOrElse("OPENAI_EMBEDDING_MODEL", "text-embedding-ada-002"),
-      organizationId = sys.env.get("OPENAI_ORG_ID"),
-      timeout = Duration.fromMillis(
-        sys.env.getOrElse("OPENAI_TIMEOUT_MS", "60000").toLong
+  def fromEnv: ZIO[Any, String, OpenAIEmbeddingConfig] =
+    ZIO.attempt {
+      OpenAIEmbeddingConfig(
+        apiKey = sys.env.getOrElse("OPENAI_API_KEY", ""),
+        model = sys.env.getOrElse("OPENAI_EMBEDDING_MODEL", "text-embedding-ada-002"),
+        organizationId = sys.env.get("OPENAI_ORG_ID"),
+        timeout = Duration.fromMillis(
+          sys.env.getOrElse("OPENAI_TIMEOUT_MS", "60000").toLong
+        ),
+        dimension = sys.env.get("OPENAI_EMBEDDING_DIMENSION").map(_.toInt).getOrElse(1536)
       )
-    )
+    }.catchAll(ex => ZIO.fail(s"Error creating OpenAIEmbeddingConfig: ${ex.getMessage}"))
+     .flatMap(config => ZIO.fromEither(config.validate))
   
   /**
-   * Creates a ZLayer that provides an OpenAIEmbeddingConfig from environment variables.
+   * Creates a ZLayer that provides a validated OpenAIEmbeddingConfig from environment variables.
    */
-  val layer: ULayer[OpenAIEmbeddingConfig] = ZLayer.succeed(fromEnv)
+  val layer: ZLayer[Any, String, OpenAIEmbeddingConfig] = ZLayer.fromZIO(fromEnv)
 
 /**
  * Internal API models for OpenAI embedding API
@@ -155,26 +173,49 @@ class OpenAIEmbedding(config: OpenAIEmbeddingConfig) extends EmbeddingModel:
    * @return A ZIO effect that produces an Embedding or fails with an EmbeddingError
    */
   override def embed(text: String): ZIO[Any, EmbeddingError, Embedding] =
-    val requestBody = EmbeddingRequestSingle(
-      model = config.model,
-      input = text
-    )
-    
-    val jsonBody = requestBody.toJson
-    
-    val result = for
-      // Call OpenAI API
-      respBody <- makeRequest(jsonBody)
+    if (text.trim.isEmpty) {
+      ZIO.fail(OpenAIEmbeddingError.invalidRequestError("Empty text provided for embedding"))
+    } else {
+      val requestBody = EmbeddingRequestSingle(
+        model = config.model,
+        input = text
+      )
       
-      // Parse the response
-      respObj <- ZIO.fromEither(respBody.fromJson[EmbeddingResponse])
-        .mapError(err => new RuntimeException(s"Failed to parse response: $err"))
+      val jsonBody = requestBody.toJson
       
-      // Extract the embedding
-      embData <- ZIO.attempt(respObj.data.head)
-    yield Embedding(embData.embedding.toVector)
-    
-    result.mapError(err => EmbeddingError(err))
+      val result = for
+        // Call OpenAI API
+        respBody <- makeRequest(jsonBody)
+        
+        // Parse the response
+        respObj <- ZIO.fromEither(respBody.fromJson[EmbeddingResponse])
+          .mapError(err => new RuntimeException(s"Failed to parse response: $err"))
+        
+        // Extract the embedding
+        embData <- ZIO.attempt(respObj.data.head)
+          .catchAll(err => ZIO.fail(new RuntimeException(s"Failed to extract embedding data: ${err.getMessage}")))
+        
+        // Validate embedding dimension if needed
+        _ <- ZIO.when(config.dimension > 0 && embData.embedding.size != config.dimension) {
+          ZIO.fail(new RuntimeException(
+            s"Embedding dimension mismatch: expected ${config.dimension}, got ${embData.embedding.size}"
+          ))
+        }
+      yield Embedding(embData.embedding.toVector)
+      
+      result.mapError {
+        case e: java.net.ConnectException =>
+          OpenAIEmbeddingError.serverError(s"Connection error: ${e.getMessage}")
+        case e: java.net.SocketTimeoutException =>
+          OpenAIEmbeddingError.timeoutError(s"Socket timeout: ${e.getMessage}")
+        case e: java.io.IOException =>
+          OpenAIEmbeddingError.serverError(s"IO error: ${e.getMessage}")
+        case e: RuntimeException if e.getMessage.contains("dimension mismatch") =>
+          OpenAIEmbeddingError.dimensionMismatchError(config.dimension, e.getMessage.split("got ")(1).toInt)
+        case e =>
+          EmbeddingError(e)
+      }
+    }
   
   /**
    * Generates embeddings for multiple texts.
@@ -184,7 +225,9 @@ class OpenAIEmbedding(config: OpenAIEmbeddingConfig) extends EmbeddingModel:
    */
   override def embedAll(texts: Seq[String]): ZIO[Any, EmbeddingError, Seq[Embedding]] =
     if (texts.isEmpty) ZIO.succeed(Seq.empty)
-    else
+    else if (texts.exists(_.trim.isEmpty)) {
+      ZIO.fail(OpenAIEmbeddingError.invalidRequestError("One or more empty texts provided for embedding"))
+    } else {
       val requestBody = EmbeddingRequestBatch(
         model = config.model,
         input = texts.toList
@@ -200,13 +243,41 @@ class OpenAIEmbedding(config: OpenAIEmbeddingConfig) extends EmbeddingModel:
         respObj <- ZIO.fromEither(respBody.fromJson[EmbeddingResponse])
           .mapError(err => new RuntimeException(s"Failed to parse response: $err"))
         
+        // Validate response data length matches input length
+        _ <- ZIO.when(respObj.data.length != texts.length) {
+          ZIO.fail(new RuntimeException(
+            s"Expected ${texts.length} embeddings, but got ${respObj.data.length}"
+          ))
+        }
+        
+        // Validate embedding dimensions if needed
+        _ <- ZIO.foreach(respObj.data) { embData =>
+          ZIO.when(config.dimension > 0 && embData.embedding.size != config.dimension) {
+            ZIO.fail(new RuntimeException(
+              s"Embedding dimension mismatch: expected ${config.dimension}, got ${embData.embedding.size}"
+            ))
+          }
+        }
+        
         // Extract embeddings and sort by index
         sortedEmbeddings = respObj.data
           .sortBy(_.index)
           .map(data => Embedding(data.embedding.toVector))
       yield sortedEmbeddings
       
-      result.mapError(err => EmbeddingError(err))
+      result.mapError {
+        case e: java.net.ConnectException =>
+          OpenAIEmbeddingError.serverError(s"Connection error: ${e.getMessage}")
+        case e: java.net.SocketTimeoutException =>
+          OpenAIEmbeddingError.timeoutError(s"Socket timeout: ${e.getMessage}")
+        case e: java.io.IOException =>
+          OpenAIEmbeddingError.serverError(s"IO error: ${e.getMessage}")
+        case e: RuntimeException if e.getMessage.contains("dimension mismatch") =>
+          OpenAIEmbeddingError.dimensionMismatchError(config.dimension, e.getMessage.split("got ")(1).toInt)
+        case e =>
+          EmbeddingError(e)
+      }
+    }
 
 /**
  * Companion object for OpenAIEmbedding.
@@ -218,9 +289,9 @@ object OpenAIEmbedding:
    * @param config The OpenAI embedding configuration
    * @return A ZIO effect that produces an OpenAIEmbedding
    */
-  def make(config: OpenAIEmbeddingConfig): UIO[OpenAIEmbedding] =
+  def make(config: OpenAIEmbeddingConfig): UIO[OpenAIEmbedding] = {
     ZIO.succeed(new OpenAIEmbedding(config))
-   
+  }
   /**
    * Creates a ZLayer that provides an EmbeddingModel implementation using OpenAI.
    *
@@ -232,4 +303,40 @@ object OpenAIEmbedding:
         config <- ZIO.service[OpenAIEmbeddingConfig]
         embedding <- make(config)
       yield embedding
-    }
+  }
+    
+/**
+ * OpenAI Embedding API specific error helpers
+ */
+object OpenAIEmbeddingError {
+  // Create wrapper methods to convert OpenAI embedding errors to EmbeddingError
+  def authenticationError(message: String): EmbeddingError =
+    EmbeddingError(new RuntimeException(s"Authentication error: $message"), "OpenAI embedding authentication failed")
+  
+  def rateLimitError(message: String): EmbeddingError =
+    EmbeddingError(new RuntimeException(s"Rate limit exceeded: $message"), "OpenAI embedding rate limit exceeded")
+  
+  def serverError(message: String): EmbeddingError =
+    EmbeddingError(new RuntimeException(s"OpenAI server error: $message"), "OpenAI embedding server error")
+  
+  def invalidRequestError(message: String): EmbeddingError =
+    EmbeddingError(new RuntimeException(s"Invalid request: $message"), "Invalid request to OpenAI embedding API")
+  
+  def timeoutError(message: String): EmbeddingError =
+    EmbeddingError(new RuntimeException(s"Request timed out: $message"), "OpenAI embedding request timed out")
+  
+  def dimensionMismatchError(expected: Int, actual: Int): EmbeddingError =
+    EmbeddingError(new RuntimeException(s"Dimension mismatch: expected $expected, got $actual"),
+                  "Vector dimension mismatch in OpenAI embedding")
+  
+  def unknownError(cause: Throwable): EmbeddingError =
+    EmbeddingError(cause, "Unknown OpenAI embedding error")
+}
+    
+  /**
+   * Creates a ZLayer that provides an EmbeddingModel implementation using OpenAI with configuration from environment variables.
+   *
+   * @return A ZLayer that provides an EmbeddingModel
+   */
+  val layer: ZLayer[Any, String, EmbeddingModel] =
+    OpenAIEmbeddingConfig.layer >>> OpenAIEmbedding.live

@@ -74,6 +74,7 @@ lazy val root = project
     integrationOpenAI,
     integrationAnthropic,
     integrationPinecone,
+    integrationPgVector,
     examples
   )
 
@@ -207,6 +208,17 @@ lazy val integrationPinecone = project
     libraryDependencies ++= commonDependencies
   )
 
+lazy val integrationPgVector = project
+  .in(file("modules/integrations/pgvector"))
+  .dependsOn(core, models, embeddings, retrievers)
+  .settings(
+    name := "zio-langchain-pgvector",
+    libraryDependencies ++= commonDependencies ++ Seq(
+      "org.postgresql" % "postgresql" % "42.7.1",
+      "com.zaxxer" % "HikariCP" % "5.1.0"
+    )
+  )
+
 lazy val evaluation = project
   .in(file("modules/evaluation"))
   .dependsOn(core, models, retrievers, chains)
@@ -235,6 +247,7 @@ lazy val examples = project
     integrationOpenAI,
     integrationAnthropic,
     integrationPinecone,
+    integrationPgVector,
     documentLoaders,
     documentParsers,
     documentProcessors,

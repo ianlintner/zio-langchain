@@ -2,8 +2,8 @@ package zio.langchain.integrations.pinecone
 
 import zio.*
 import zio.json.*
-import zio.http.*
 import zio.stream.ZStream
+import zio.http.*
 
 import zio.langchain.core.retriever.Retriever
 import zio.langchain.core.model.EmbeddingModel
@@ -24,6 +24,7 @@ class PineconeStore private (
   embeddingModel: EmbeddingModel
 ) extends Retriever:
   import PineconeApi.*
+  import zio.langchain.core.errors.PineconeError
 
   /**
    * The base URL for the Pinecone API.
@@ -31,7 +32,7 @@ class PineconeStore private (
   private val baseUrl = s"https://${config.indexName}-${config.projectId}.svc.${config.environment}.pinecone.io"
 
   /**
-   * Makes an HTTP request to the Pinecone API using ZIO HTTP.
+   * Makes an HTTP request to the Pinecone API using Java's HttpClient.
    *
    * @param path The API endpoint path
    * @param method The HTTP method
@@ -40,54 +41,87 @@ class PineconeStore private (
    */
   private def makeRequest(
     path: String,
-    method: Method,
+    method: String,
     jsonBody: Option[String] = None
-  ): ZIO[Any, Throwable, String] = {
-    // Create headers
-    val headers = Headers(
-      Header.ContentType(MediaType.application.json),
-      Header.Custom("Api-Key", config.apiKey)
-    )
-    
-    // Create request body if provided
-    val body = jsonBody match {
-      case Some(json) => Body.fromString(json)
-      case None => Body.empty
-    }
-    
-    // Create and send request
-    ZIO.scoped {
-      for {
-        // Get client
-        client <- ZIO.service[Client].provide(Client.default)
+  ): ZIO[Any, RetrieverError, String] = {
+    // Use Java's HttpClient directly instead of ZIO HTTP
+    ZIO.attempt {
+      import java.net.http.{HttpClient, HttpRequest, HttpResponse}
+      import java.net.URI
+      import java.time.Duration
+      
+      val client = HttpClient.newBuilder()
+        .connectTimeout(Duration.ofMillis(config.timeout.toMillis))
+        .build()
         
-        // Parse URL
-        url <- ZIO.fromEither(URL.decode(s"$baseUrl$path"))
-                .orElseFail(new RuntimeException(s"Invalid URL: $baseUrl$path"))
-        
-        // Create request
-        request = method match {
-          case Method.GET => Request.get(url).updateHeaders(_ ++ headers)
-          case Method.POST => Request.post(body, url).updateHeaders(_ ++ headers)
-          case Method.PUT => Request.put(body, url).updateHeaders(_ ++ headers)
-          case Method.DELETE => Request.delete(url).updateHeaders(_ ++ headers)
-          case _ => Request.apply(body, Headers.empty, method, url, Version.Http_1_1, None).updateHeaders(_ => headers)
-        }
-        
-        // Send request
-        response <- client.request(request)
-                     .timeoutFail(new RuntimeException("Request timed out"))(config.timeout)
-        
-        // Check for errors
-        _ <- ZIO.when(response.status.isError) {
-          response.body.asString.flatMap { body =>
-            ZIO.fail(new RuntimeException(s"Pinecone API error: ${response.status.code}, body: $body"))
+      // Create request builder with common headers
+      val baseRequestBuilder = HttpRequest.newBuilder()
+        .uri(URI.create(s"$baseUrl$path"))
+        .header("Content-Type", "application/json")
+        .header("Authorization", s"Bearer ${config.apiKey}")
+        .timeout(Duration.ofMillis(config.timeout.toMillis))
+      
+      // Build the request based on method
+      val request = method match {
+        case "GET" =>
+          baseRequestBuilder.GET().build()
+        case "DELETE" =>
+          baseRequestBuilder.DELETE().build()
+        case "POST" =>
+          val bodyPublisher = jsonBody match {
+            case Some(json) => HttpRequest.BodyPublishers.ofString(json)
+            case None => HttpRequest.BodyPublishers.noBody()
           }
-        }
+          baseRequestBuilder.POST(bodyPublisher).build()
+        case "PUT" =>
+          val bodyPublisher = jsonBody match {
+            case Some(json) => HttpRequest.BodyPublishers.ofString(json)
+            case None => HttpRequest.BodyPublishers.noBody()
+          }
+          baseRequestBuilder.PUT(bodyPublisher).build()
+        case _ =>
+          throw new IllegalArgumentException(s"Unsupported HTTP method: $method")
+      }
+      
+      // Send the request
+      val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+      
+      // Check for errors
+      if (response.statusCode() >= 400) {
+        val errorMsg = s"Pinecone API error: ${response.statusCode()}, body: ${response.body()}"
         
-        // Get response body
-        responseBody <- response.body.asString
-      } yield responseBody
+        response.statusCode() match {
+          case 401 | 403 => throw new RuntimeException(s"Authentication error: $errorMsg")
+          case 404 => throw new RuntimeException(s"Index not found: ${config.indexName}")
+          case 429 => throw new RuntimeException(s"Rate limit exceeded: $errorMsg")
+          case code if code >= 500 => throw new RuntimeException(s"Pinecone server error: $errorMsg")
+          case _ => throw new RuntimeException(s"Invalid request: $errorMsg")
+        }
+      }
+      
+      response.body()
+    }.mapError {
+      case e: java.net.ConnectException => 
+        PineconeError.serverError(s"Connection error: ${e.getMessage}")
+      case e: java.net.SocketTimeoutException => 
+        PineconeError.timeoutError(s"Socket timeout: ${e.getMessage}")
+      case e: java.io.IOException => 
+        PineconeError.serverError(s"IO error: ${e.getMessage}")
+      case e: java.lang.IllegalArgumentException => 
+        PineconeError.invalidRequestError(e.getMessage)
+      case e: RuntimeException if e.getMessage.startsWith("Authentication error") =>
+        PineconeError.authenticationError(e.getMessage)
+      case e: RuntimeException if e.getMessage.startsWith("Index not found") =>
+        PineconeError.indexNotFoundError(config.indexName)
+      case e: RuntimeException if e.getMessage.startsWith("Rate limit exceeded") =>
+        PineconeError.rateLimitError(e.getMessage)
+      case e: RuntimeException if e.getMessage.startsWith("Pinecone server error") =>
+        PineconeError.serverError(e.getMessage)
+      case e: RuntimeException if e.getMessage.startsWith("Invalid request") =>
+        PineconeError.invalidRequestError(e.getMessage)
+      case e: RetrieverError => e
+      case e => 
+        PineconeError.unknownError(e)
     }
   }
 
@@ -104,6 +138,14 @@ class PineconeStore private (
         // Generate embeddings for the documents
         docEmbeddings <- embeddingModel.embedDocuments(documents)
           .mapError(err => RetrieverError(err, "Failed to generate embeddings for documents"))
+        
+        // Validate dimensions match the configured dimension
+        _ <- ZIO.foreach(docEmbeddings) { case (_, embedding) =>
+          if (embedding.values.length != config.dimension)
+            ZIO.fail(PineconeError.dimensionMismatchError(config.dimension, embedding.values.length))
+          else
+            ZIO.unit
+        }
         
         // Convert to Pinecone vectors
         vectors = docEmbeddings.map { case (doc, embedding) =>
@@ -131,10 +173,9 @@ class PineconeStore private (
           
           makeRequest(
             path = "/vectors/upsert",
-            method = Method.POST,
+            method = "POST",
             jsonBody = Some(upsertRequest.toJson)
-          ).mapError(err => RetrieverError(err, "Failed to upsert vectors to Pinecone"))
-            .unit
+          ).unit
         }
       } yield ()
 
@@ -164,10 +205,9 @@ class PineconeStore private (
       
       makeRequest(
         path = "/vectors/delete",
-        method = Method.POST,
+        method = "POST",
         jsonBody = Some(deleteRequest.toJson)
-      ).mapError(err => RetrieverError(err, "Failed to delete vectors from Pinecone"))
-        .unit
+      ).unit
 
   /**
    * Deletes all documents from the Pinecone index.
@@ -183,10 +223,9 @@ class PineconeStore private (
     
     makeRequest(
       path = "/vectors/delete",
-      method = Method.POST,
+      method = "POST",
       jsonBody = Some(deleteRequest.toJson)
-    ).mapError(err => RetrieverError(err, "Failed to delete all vectors from Pinecone"))
-      .unit
+    ).unit
 
   /**
    * Retrieves documents relevant to a query.
@@ -211,6 +250,11 @@ class PineconeStore private (
       queryEmbedding <- embeddingModel.embedQuery(query)
         .mapError(err => RetrieverError(err, "Failed to generate embedding for query"))
       
+      // Validate dimension
+      _ <- ZIO.when(queryEmbedding.values.length != config.dimension) {
+        ZIO.fail(PineconeError.dimensionMismatchError(config.dimension, queryEmbedding.values.length))
+      }
+      
       // Create query request
       queryRequest = QueryRequest(
         vector = queryEmbedding.values.toArray,
@@ -223,13 +267,13 @@ class PineconeStore private (
       // Send query request
       responseJson <- makeRequest(
         path = "/query",
-        method = Method.POST,
+        method = "POST",
         jsonBody = Some(queryRequest.toJson)
-      ).mapError(err => RetrieverError(err, "Failed to query Pinecone"))
+      )
       
       // Parse response
       response <- ZIO.fromEither(responseJson.fromJson[QueryResponse])
-        .mapError(err => RetrieverError(new RuntimeException(s"Failed to parse Pinecone response: $err"), ""))
+        .mapError(err => PineconeError.invalidRequestError(s"Failed to parse Pinecone response: $err"))
       
       // Convert to documents with scores
       documents = response.matches.flatMap { m =>
@@ -258,7 +302,7 @@ object PineconeStore:
   def make(
     config: PineconeConfig,
     embeddingModel: EmbeddingModel
-  ): ZIO[Any, Nothing, PineconeStore] =
+  ): UIO[PineconeStore] =
     ZIO.succeed(new PineconeStore(config, embeddingModel))
 
   /**
@@ -267,13 +311,13 @@ object PineconeStore:
    * @return A ZLayer that requires a PineconeConfig and an EmbeddingModel and provides a Retriever
    */
   val live: ZLayer[PineconeConfig & EmbeddingModel, Nothing, Retriever] =
-    ZLayer {
-      for
+    ZLayer.fromZIO(
+      for {
         config <- ZIO.service[PineconeConfig]
         embeddingModel <- ZIO.service[EmbeddingModel]
         store <- make(config, embeddingModel)
-      yield store
-    }
+      } yield store
+    )
 
   /**
    * Creates a ZLayer that provides a PineconeStore.
@@ -281,13 +325,43 @@ object PineconeStore:
    * @return A ZLayer that requires a PineconeConfig and an EmbeddingModel and provides a PineconeStore
    */
   val liveStore: ZLayer[PineconeConfig & EmbeddingModel, Nothing, PineconeStore] =
-    ZLayer {
-      for
+    ZLayer.fromZIO(
+      for {
         config <- ZIO.service[PineconeConfig]
         embeddingModel <- ZIO.service[EmbeddingModel]
         store <- make(config, embeddingModel)
-      yield store
+      } yield store
+    )
+
+  /**
+   * Creates a scoped ZLayer that provides a PineconeStore.
+   * This ensures proper resource cleanup when the scope ends.
+   *
+   * @return A ZLayer that requires a PineconeConfig and an EmbeddingModel and provides a PineconeStore
+   */
+  val scoped: ZLayer[PineconeConfig & EmbeddingModel, Nothing, PineconeStore] =
+    ZLayer.scoped {
+      for {
+        config <- ZIO.service[PineconeConfig]
+        embeddingModel <- ZIO.service[EmbeddingModel]
+        store <- ZIO.acquireRelease(
+          make(config, embeddingModel)
+        )(_ => ZIO.unit) // No specific cleanup needed for PineconeStore
+      } yield store
     }
+    
+  /**
+   * Creates a ZLayer that provides a PineconeStore with a default HTTP client.
+   * This is used in the PineconeExample.
+   */
+  val liveStoreWithDefaultClient: ZLayer[PineconeConfig & EmbeddingModel, Nothing, PineconeStore] =
+    ZLayer.fromZIO(
+      for {
+        config <- ZIO.service[PineconeConfig]
+        embeddingModel <- ZIO.service[EmbeddingModel]
+        store <- make(config, embeddingModel)
+      } yield store
+    )
 
 /**
  * Internal API models for Pinecone API.
