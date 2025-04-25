@@ -71,6 +71,7 @@ lazy val root = project
     tools,
     rag,
     evaluation,
+    http,
     integrationOpenAI,
     integrationAnthropic,
     integrationPinecone,
@@ -227,6 +228,14 @@ lazy val evaluation = project
     libraryDependencies ++= commonDependencies
   )
 
+lazy val http = project
+  .in(file("modules/http"))
+  .dependsOn(core)
+  .settings(
+    name := "zio-langchain-http",
+    libraryDependencies ++= commonDependencies
+  )
+
 // Commented out as langchain4j-huggingface dependency may not be compatible with chosen version
 // lazy val integrationHuggingFace = project
 //   .in(file("modules/integrations/huggingface"))
@@ -254,6 +263,7 @@ lazy val examples = project
     parsers,
     retrievers,
     rag,
+    http,
     memory,
     tools,
     evaluation
