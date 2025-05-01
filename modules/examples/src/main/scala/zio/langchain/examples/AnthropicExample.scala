@@ -1,13 +1,12 @@
-// TODO: Fix Anthropic integration
-// This file is temporarily commented out due to package structure issues
-/*
 package zio.langchain.examples
 
 import zio.*
 import zio.Console.*
+import zio.http.Client
 
 import zio.langchain.core.model.LLM
 import zio.langchain.core.domain.*
+import zio.langchain.integrations.anthropic.*
 
 /**
  * Example demonstrating the use of Anthropic Claude integration.
@@ -51,13 +50,14 @@ object AnthropicExample extends ZIOAppDefault:
   yield ()
 
   override def run = program.provide(
-    // Use OpenAI instead of Anthropic for now
-    zio.langchain.integrations.openai.OpenAILLM.live,
+    // Anthropic configuration layer
     ZLayer.succeed(
-      zio.langchain.integrations.openai.OpenAIConfig(
-        apiKey = sys.env.getOrElse("OPENAI_API_KEY", ""),
-        model = "gpt-3.5-turbo"
+      AnthropicConfig(
+        apiKey = sys.env.getOrElse("ANTHROPIC_API_KEY", ""),
+        model = "claude-3-sonnet-20240229"
       )
-    )
+    ),
+    
+    // Anthropic LLM layer - includes Client.default internally
+    AnthropicLLM.live
   )
-*/

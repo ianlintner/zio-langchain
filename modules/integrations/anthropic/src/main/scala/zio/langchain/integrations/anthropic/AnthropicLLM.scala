@@ -348,5 +348,9 @@ object AnthropicLLM:
    *
    * @return A ZLayer that provides an LLM
    */
-  val layer: ZLayer[Any, Config.Error, LLM] =
-    AnthropicConfig.layer >>> live
+  val layer: ZLayer[Any, Config.Error, LLM] = {
+    // Explicitly help the compiler understand the composition
+    val configLayer: ZLayer[Any, Config.Error, AnthropicConfig] = AnthropicConfig.layer
+    val llmLayer: ZLayer[AnthropicConfig, Nothing, LLM] = live
+    configLayer >>> llmLayer
+  }

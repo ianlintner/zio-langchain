@@ -21,24 +21,8 @@ object SimpleCompileTest extends ZIOAppDefault:
 
   override def run =
     program.provide(
-      // OpenAI LLM layer
-      OpenAILLM.live,
-      // OpenAI configuration layer with validation
-      ZLayer.fromZIO(
-        ZIO.attempt {
-          OpenAIConfig(
-            apiKey = sys.env.getOrElse("OPENAI_API_KEY", ""),
-            model = sys.env.getOrElse("OPENAI_MODEL", "gpt-3.5-turbo"),
-            temperature = 0.7,
-            maxTokens = Some(150)
-          )
-        }.flatMap(config => 
-          if (config.apiKey.trim.isEmpty) 
-            ZIO.fail(new RuntimeException("OpenAI API key is missing. Please set the OPENAI_API_KEY environment variable."))
-          else 
-            ZIO.succeed(config)
-        )
-      )
+      // Use the fromEnv layer which includes both OpenAIConfig and Client
+      OpenAILLM.fromEnv
     ).catchAllCause { cause =>
       val error = cause.failureOption.getOrElse(new RuntimeException("Unknown error"))
       val message = error.getMessage

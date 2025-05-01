@@ -16,7 +16,7 @@ import zio.langchain.core.tool.Tool
  *
  * @param config The OpenAI configuration
  */
-class OpenAILLM(config: OpenAIConfig) extends LLM:
+class OpenAILLM(config: OpenAIConfig, client: Client) extends LLM:
   import OpenAILLM.*
   
   private val apiUrl = "https://api.openai.com/v1/chat/completions"
@@ -30,54 +30,46 @@ class OpenAILLM(config: OpenAIConfig) extends LLM:
       println(s"OpenAI API Request: $jsonBody")
     }
     
-    // Create request headers
-    val authHeader = s"Bearer ${config.apiKey}"
-    val orgHeader = config.organizationId.map(orgId => s"OpenAI-Organization: $orgId").getOrElse("")
+    // Create headers
+    val headers = Headers(
+      Header.ContentType(MediaType.application.json),
+      Header.Authorization.Bearer(config.apiKey)
+    ) ++ (config.organizationId match {
+      case Some(orgId) => Headers(Header.Custom("OpenAI-Organization", orgId))
+      case None => Headers.empty
+    })
     
-    // Use Java's HttpClient directly instead of ZIO HTTP
-    ZIO.attempt {
-      import java.net.http.{HttpClient, HttpRequest, HttpResponse}
-      import java.net.URI
-      import java.time.Duration
+    // Create request body
+    val body = Body.fromString(jsonBody)
+    
+    // Create and send request
+    for {
+      // Parse URL
+      url <- ZIO.fromEither(URL.decode(apiUrl))
+               .orElseFail(new RuntimeException(s"Invalid URL: $apiUrl"))
       
-      val client = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofMillis(config.timeout.toMillis))
-        .build()
+      // Create request
+      request = Request.post(body, url).updateHeaders(_ ++ headers)
+      
+      // Send request
+      response <- client.request(request)
+                    .timeoutFail(new RuntimeException("Request timed out"))(config.timeout)
         
-      val requestBuilder = HttpRequest.newBuilder()
-        .uri(URI.create(apiUrl))
-        .header("Content-Type", "application/json")
-        .header("Authorization", authHeader)
+        // Check for errors
+        _ <- ZIO.when(response.status.isError) {
+          response.body.asString.flatMap { body =>
+            ZIO.fail(new RuntimeException(s"OpenAI API error: ${response.status.code}, body: $body"))
+          }
+        }
         
-      // Add organization header if present
-      val requestWithOrg = if (orgHeader.nonEmpty) {
-        requestBuilder.header("OpenAI-Organization", config.organizationId.get)
-      } else {
-        requestBuilder
-      }
-      
-      // Build and send the request
-      val request = requestWithOrg
-        .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
-        .timeout(Duration.ofMillis(config.timeout.toMillis))
-        .build()
+        // Get response body
+        responseBody <- response.body.asString
         
-      val response = client.send(request, HttpResponse.BodyHandlers.ofString())
-      
-      // Check for errors
-      if (response.statusCode() >= 400) {
-        throw new RuntimeException(s"OpenAI API error: ${response.statusCode()}, body: ${response.body()}")
-      }
-      
-      val responseBody = response.body()
-      
-      // Log response if enabled
-      if (config.logResponses) {
-        println(s"OpenAI API Response: $responseBody")
-      }
-      
-      responseBody
-    }
+        // Log response if enabled
+        _ <- ZIO.when(config.logResponses) {
+          ZIO.succeed(println(s"OpenAI API Response: $responseBody"))
+        }
+      } yield responseBody
   }
   
   /**
@@ -127,7 +119,8 @@ class OpenAILLM(config: OpenAIConfig) extends LLM:
       model = config.model,
       messages = apiMessages,
       temperature = temperature,
-      max_tokens = maxTokens
+      max_tokens = maxTokens,
+      stream = false
     )
     
     val jsonBody = request.toJson
@@ -195,22 +188,24 @@ class OpenAILLM(config: OpenAIConfig) extends LLM:
   
   /**
    * Streams a text completion token by token.
-   * This is a simplified implementation that doesn't actually stream.
    */
   override def streamComplete(
     prompt: String,
     parameters: Option[ModelParameters] = None
   ): ZStream[Any, LLMError, String] =
-    ZStream.fromZIO(complete(prompt, parameters))
+    // Convert to chat completion with a single user message
+    streamCompleteChat(Seq(ChatMessage.user(prompt)), parameters)
+      .map(_.message.contentAsString)
   
   /**
    * Streams a chat completion token by token.
-   * This is a simplified implementation that doesn't actually stream.
    */
   override def streamCompleteChat(
     messages: Seq[ChatMessage],
     parameters: Option[ModelParameters] = None
   ): ZStream[Any, LLMError, ChatResponse] =
+    // For now, using the non-streaming implementation
+    // In a future enhancement, this could be properly implemented using SSE streaming with zio-http
     ZStream.fromZIO(completeChat(messages, parameters))
   
   /**
@@ -309,31 +304,36 @@ object OpenAILLM:
     given JsonDecoder[ChatCompletionResponse] = DeriveJsonDecoder.gen[ChatCompletionResponse]
   
   /**
-   * Creates an OpenAILLM from an OpenAIConfig.
+   * Creates an OpenAILLM from an OpenAIConfig and Client.
    *
    * @param config The OpenAI configuration
+   * @param client The HTTP client
    * @return A ZIO effect that produces an OpenAILLM
    */
-  def make(config: OpenAIConfig): UIO[OpenAILLM] =
-    ZIO.succeed(new OpenAILLM(config))
+  def make(config: OpenAIConfig, client: Client): UIO[OpenAILLM] =
+    ZIO.succeed(new OpenAILLM(config, client))
   
   /**
    * Creates a ZLayer that provides an LLM implementation using OpenAI.
    *
-   * @return A ZLayer that requires an OpenAIConfig and provides an LLM
+   * @return A ZLayer that requires an OpenAIConfig and Client and provides an LLM
    */
-  val live: ZLayer[OpenAIConfig, Nothing, LLM] =
+  val live: ZLayer[OpenAIConfig & Client, Nothing, LLM] =
     ZLayer {
       for
         config <- ZIO.service[OpenAIConfig]
-        llm <- make(config)
+        client <- ZIO.service[Client]
+        llm <- make(config, client)
       yield llm
     }
   
   /**
    * Creates a ZLayer for the OpenAILLM using environment variables.
+   * Maps String errors from config layer to Throwable.
    *
    * @return A ZLayer that provides an LLM
    */
-  val fromEnv: ZLayer[Any, String, LLM] =
-    OpenAIConfig.layer >>> live
+  val fromEnv: ZLayer[Any, Throwable, LLM] =
+    // Convert config layer's String errors to Throwable, then compose with client and live layers
+    OpenAIConfig.layer.mapError(err => new RuntimeException(err)) ++
+    Client.default >>> live

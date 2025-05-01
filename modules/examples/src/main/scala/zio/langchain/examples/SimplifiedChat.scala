@@ -2,6 +2,7 @@ package zio.langchain.examples
 
 import zio.*
 import zio.Console.*
+import zio.http.Client
 
 import zio.langchain.core.model.LLM
 import zio.langchain.core.domain.*
@@ -33,8 +34,12 @@ object SimplifiedChat extends ZIOAppDefault:
     
     // Provide the required services and run the program
     program.provide(
+      // HTTP Client dependency required by all API integrations
+      Client.default,
+      
       // OpenAI LLM layer
       OpenAILLM.live,
+      
       // OpenAI configuration layer
       ZLayer.succeed(
         OpenAIConfig(

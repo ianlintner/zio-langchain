@@ -72,6 +72,9 @@ object PineconeExample extends ZIOAppDefault {
 
     // Provide the necessary dependencies with validated configurations
     program.provide(
+      // HTTP Client dependency required by all API integrations
+      Client.default,
+      
       // OpenAI embedding model with validated configuration
       ZLayer.fromZIOEnvironment(
         ZIO.environment[OpenAIEmbeddingConfig].provideLayer(
@@ -80,14 +83,13 @@ object PineconeExample extends ZIOAppDefault {
       ),
       OpenAIEmbedding.live,
       
-      // Pinecone configuration and store with default HTTP client
+      // Pinecone configuration and store
       ZLayer.fromZIOEnvironment(
         ZIO.environment[PineconeConfig].provideLayer(
           ZLayer.fromZIO(PineconeConfig.fromEnv.mapError(err => new RuntimeException(err)))
         )
       ),
-      // Use the liveStoreWithDefaultClient which includes a properly configured HTTP client
-      PineconeStore.liveStoreWithDefaultClient
+      PineconeStore.liveStore
     ).tapError(err => printLine(s"Application error: ${err.toString}"))
   }
 

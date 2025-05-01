@@ -195,7 +195,7 @@ lazy val integrationOpenAI = project
 
 lazy val integrationAnthropic = project
   .in(file("modules/integrations/anthropic"))
-  .dependsOn(core, models)
+  .dependsOn(core, models, http)
   .settings(
     name := "zio-langchain-anthropic",
     libraryDependencies ++= commonDependencies
@@ -203,7 +203,7 @@ lazy val integrationAnthropic = project
 
 lazy val integrationPinecone = project
   .in(file("modules/integrations/pinecone"))
-  .dependsOn(core, models, embeddings, retrievers)
+  .dependsOn(core, models, embeddings, retrievers, http)
   .settings(
     name := "zio-langchain-pinecone",
     libraryDependencies ++= commonDependencies
